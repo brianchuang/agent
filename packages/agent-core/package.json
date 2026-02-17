@@ -1,0 +1,22 @@
+{
+  "name": "@agent/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MVP interview management agent with memory retrieval, promotion, and decay.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/demo.js",
+    "dev": "ts-node src/demo.ts",
+    "test": "npm run build && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@agent/observability": "file:../agent-observability",
+    "uuidv7": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

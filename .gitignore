@@ -1,0 +1,7 @@
+node_modules
+.npm
+.turbo
+.next
+out
+coverage
+.DS_Store

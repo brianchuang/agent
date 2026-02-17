@@ -1,0 +1,24 @@
+{
+  "name": "@agent/observability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "db:migrate": "DATABASE_URL=${AGENT_DATABASE_URL:-postgres://agent:agent@127.0.0.1:55432/agent_observability?sslmode=disable} dbmate --wait --wait-timeout 60s --migrations-dir ./migrations --no-dump-schema up",
+    "db:rollback": "DATABASE_URL=${AGENT_DATABASE_URL:-postgres://agent:agent@127.0.0.1:55432/agent_observability?sslmode=disable} dbmate --wait --wait-timeout 60s --migrations-dir ./migrations --no-dump-schema rollback",
+    "db:status": "DATABASE_URL=${AGENT_DATABASE_URL:-postgres://agent:agent@127.0.0.1:55432/agent_observability?sslmode=disable} dbmate --wait --wait-timeout 60s --migrations-dir ./migrations --no-dump-schema status"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "uuidv7": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/pg": "^8.11.10",
+    "dbmate": "^2.30.0",
+    "typescript": "^5.7.3"
+  }
+}
