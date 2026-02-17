@@ -1,7 +1,7 @@
-import type { WorkflowQueueJob } from "@agent/observability";
+import type { JsonValue, WorkflowQueueJob } from "@agent/observability";
 
 export type QueueExecutionAdapter = {
-  execute(job: WorkflowQueueJob): Promise<Record<string, unknown>>;
+  execute(job: WorkflowQueueJob): Promise<Record<string, JsonValue>>;
 };
 
 export function createInlineExecutionAdapter(): QueueExecutionAdapter {

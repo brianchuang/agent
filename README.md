@@ -23,6 +23,10 @@ This repository exists to make production-grade agent infrastructure reusable:
 - Event-log first storage: append-only `run_events` with query projections (`runs`, `agents`).
 - Safety by default: policy and approval gates execute before side effects.
 - Tenant isolation everywhere: runtime, memory, tools, persistence, and dashboards.
+- Durable queue boundary for run dispatch:
+  - API enqueue path writes tenant-scoped queue jobs.
+  - Worker claims jobs with lease tokens and records run progress/events.
+  - Queue adapter is swappable for external orchestrators (e.g. Inngest/Temporal).
 
 Detailed architecture and system diagram: `packages/agent-core/docs/ARCHITECTURE.md`.
 
@@ -32,6 +36,8 @@ Detailed architecture and system diagram: `packages/agent-core/docs/ARCHITECTURE
 - Start Postgres (Docker): `npm run db:up`
 - Apply migrations: `npm run db:migrate`
 - Run the workspace in development: `npm run dev`
+- Start local queue worker (dashboard process): `npm run worker --workspace dashboard`
+- Process one batch once: `npm run worker:once --workspace dashboard`
 
 Database URL resolution order:
 

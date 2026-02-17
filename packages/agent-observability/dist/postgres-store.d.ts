@@ -1,4 +1,4 @@
-import { Agent, DashboardData, ObservabilityStore, Run, RunEvent, RunsFilter } from "./types";
+import { Agent, ClaimWorkflowJobsInput, CompleteWorkflowJobInput, DashboardData, FailWorkflowJobInput, ObservabilityStore, Run, RunEvent, RunsFilter, WorkflowQueueJob, WorkflowQueueJobCreateInput } from "./types";
 export declare class PostgresObservabilityStore implements ObservabilityStore {
     private readonly pool;
     constructor(connectionString: string);
@@ -12,4 +12,9 @@ export declare class PostgresObservabilityStore implements ObservabilityStore {
     upsertRun(run: Run): Promise<void>;
     listRunEvents(runId: string): Promise<RunEvent[]>;
     appendRunEvent(runEvent: RunEvent): Promise<void>;
+    enqueueWorkflowJob(input: WorkflowQueueJobCreateInput): Promise<WorkflowQueueJob>;
+    claimWorkflowJobs(input: ClaimWorkflowJobsInput): Promise<WorkflowQueueJob[]>;
+    completeWorkflowJob(input: CompleteWorkflowJobInput): Promise<void>;
+    failWorkflowJob(input: FailWorkflowJobInput): Promise<void>;
+    getWorkflowJob(jobId: string): Promise<WorkflowQueueJob | undefined>;
 }

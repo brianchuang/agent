@@ -1,6 +1,7 @@
 import { uuidv7 } from "uuidv7";
 import type {
   ClaimWorkflowJobsInput,
+  JsonValue,
   ObservabilityStore,
   WorkflowQueueJob
 } from "@agent/observability";
@@ -15,7 +16,7 @@ export type QueueRunnerDependencies = {
     | "upsertRun"
     | "appendRunEvent"
   >;
-  execute: (job: WorkflowQueueJob) => Promise<Record<string, unknown>>;
+  execute: (job: WorkflowQueueJob) => Promise<Record<string, JsonValue>>;
 };
 
 export type QueueRunnerInput = ClaimWorkflowJobsInput;

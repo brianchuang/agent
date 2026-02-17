@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PostgresObservabilityStore = void 0;
 const pg_1 = require("pg");
+const uuidv7_1 = require("uuidv7");
 function mapAgent(row) {
     return {
         id: row.id,
@@ -43,6 +44,28 @@ function mapRunEvent(row) {
         workspaceId: row.workspace_id,
         idempotencyKey: row.idempotency_key ?? undefined,
         metadata: row.metadata ?? undefined
+    };
+}
+function mapWorkflowQueueJob(row) {
+    return {
+        id: row.id,
+        runId: row.run_id,
+        agentId: row.agent_id,
+        tenantId: row.tenant_id,
+        workspaceId: row.workspace_id,
+        workflowId: row.workflow_id,
+        requestId: row.request_id,
+        threadId: row.thread_id,
+        objectivePrompt: row.objective_prompt,
+        status: row.status,
+        attemptCount: row.attempt_count,
+        maxAttempts: row.max_attempts,
+        availableAt: row.available_at.toISOString(),
+        leaseToken: row.lease_token ?? undefined,
+        leaseExpiresAt: row.lease_expires_at?.toISOString(),
+        lastError: row.last_error ?? undefined,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString()
     };
 }
 class PostgresObservabilityStore {
@@ -213,6 +236,127 @@ class PostgresObservabilityStore {
         finally {
             client.release();
         }
+    }
+    async enqueueWorkflowJob(input) {
+        const result = await this.pool.query(`INSERT INTO workflow_queue_jobs (
+          id, run_id, agent_id, tenant_id, workspace_id, workflow_id, request_id, thread_id,
+          objective_prompt, status, attempt_count, max_attempts, available_at
+       ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', 0, $10, $11::timestamptz
+       )
+       ON CONFLICT (tenant_id, workspace_id, request_id)
+       DO UPDATE SET
+         run_id = EXCLUDED.run_id,
+         agent_id = EXCLUDED.agent_id,
+         workflow_id = EXCLUDED.workflow_id,
+         thread_id = EXCLUDED.thread_id,
+         objective_prompt = EXCLUDED.objective_prompt,
+         max_attempts = EXCLUDED.max_attempts,
+         available_at = EXCLUDED.available_at,
+         status = 'queued',
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         updated_at = NOW()
+       RETURNING
+         id, run_id, agent_id, tenant_id, workspace_id, workflow_id, request_id, thread_id,
+         objective_prompt, status, attempt_count, max_attempts, available_at, lease_token,
+         lease_expires_at, last_error, created_at, updated_at`, [
+            input.id,
+            input.runId,
+            input.agentId,
+            input.tenantId,
+            input.workspaceId,
+            input.workflowId,
+            input.requestId,
+            input.threadId,
+            input.objectivePrompt,
+            input.maxAttempts,
+            input.availableAt
+        ]);
+        return mapWorkflowQueueJob(result.rows[0]);
+    }
+    async claimWorkflowJobs(input) {
+        const now = input.now ?? new Date().toISOString();
+        const client = await this.pool.connect();
+        try {
+            await client.query("BEGIN");
+            const whereClauses = [
+                `available_at <= $1::timestamptz`,
+                `(status = 'queued' OR (status = 'claimed' AND lease_expires_at <= $1::timestamptz))`
+            ];
+            const values = [now];
+            if (input.tenantId && input.workspaceId) {
+                values.push(input.tenantId, input.workspaceId);
+                whereClauses.push(`tenant_id = $${values.length - 1}`);
+                whereClauses.push(`workspace_id = $${values.length}`);
+            }
+            values.push(input.limit);
+            const candidateRows = await client.query(`SELECT id
+           FROM workflow_queue_jobs
+           WHERE ${whereClauses.join(" AND ")}
+           ORDER BY available_at ASC, created_at ASC
+           LIMIT $${values.length}
+           FOR UPDATE SKIP LOCKED`, values);
+            const claimed = [];
+            for (const row of candidateRows.rows) {
+                const leaseToken = `${input.workerId}:${(0, uuidv7_1.uuidv7)()}`;
+                const updated = await client.query(`UPDATE workflow_queue_jobs
+              SET status = 'claimed',
+                  lease_token = $2,
+                  lease_expires_at = ($1::timestamptz + make_interval(secs => ($3::double precision / 1000.0))),
+                  attempt_count = attempt_count + 1,
+                  updated_at = NOW()
+            WHERE id = $4
+            RETURNING
+              id, run_id, agent_id, tenant_id, workspace_id, workflow_id, request_id, thread_id,
+              objective_prompt, status, attempt_count, max_attempts, available_at, lease_token,
+              lease_expires_at, last_error, created_at, updated_at`, [now, leaseToken, input.leaseMs, row.id]);
+                if (updated.rowCount) {
+                    claimed.push(mapWorkflowQueueJob(updated.rows[0]));
+                }
+            }
+            await client.query("COMMIT");
+            return claimed;
+        }
+        catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async completeWorkflowJob(input) {
+        await this.pool.query(`UPDATE workflow_queue_jobs
+          SET status = 'completed',
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              updated_at = NOW()
+        WHERE id = $1
+          AND lease_token = $2`, [input.jobId, input.leaseToken]);
+    }
+    async failWorkflowJob(input) {
+        const retryAt = input.retryAt ?? new Date().toISOString();
+        await this.pool.query(`UPDATE workflow_queue_jobs
+          SET status =
+                CASE WHEN attempt_count >= max_attempts THEN 'failed' ELSE 'queued' END,
+              last_error = $3,
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              available_at =
+                CASE WHEN attempt_count >= max_attempts THEN available_at ELSE $4::timestamptz END,
+              updated_at = NOW()
+        WHERE id = $1
+          AND lease_token = $2`, [input.jobId, input.leaseToken, input.error, retryAt]);
+    }
+    async getWorkflowJob(jobId) {
+        const result = await this.pool.query(`SELECT
+          id, run_id, agent_id, tenant_id, workspace_id, workflow_id, request_id, thread_id,
+          objective_prompt, status, attempt_count, max_attempts, available_at, lease_token,
+          lease_expires_at, last_error, created_at, updated_at
+         FROM workflow_queue_jobs
+         WHERE id = $1`, [jobId]);
+        return result.rowCount ? mapWorkflowQueueJob(result.rows[0]) : undefined;
     }
 }
 exports.PostgresObservabilityStore = PostgresObservabilityStore;

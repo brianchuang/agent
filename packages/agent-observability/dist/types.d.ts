@@ -57,6 +57,58 @@ export type DashboardMetrics = {
     avgLatencyMs: number;
     failedRuns24h: number;
 };
+export type WorkflowQueueJobStatus = "queued" | "claimed" | "completed" | "failed";
+export type WorkflowQueueJob = {
+    id: string;
+    runId: string;
+    agentId: string;
+    tenantId: string;
+    workspaceId: string;
+    workflowId: string;
+    requestId: string;
+    threadId: string;
+    objectivePrompt: string;
+    status: WorkflowQueueJobStatus;
+    attemptCount: number;
+    maxAttempts: number;
+    availableAt: string;
+    leaseToken?: string;
+    leaseExpiresAt?: string;
+    lastError?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+export type WorkflowQueueJobCreateInput = {
+    id: string;
+    runId: string;
+    agentId: string;
+    tenantId: string;
+    workspaceId: string;
+    workflowId: string;
+    requestId: string;
+    threadId: string;
+    objectivePrompt: string;
+    maxAttempts: number;
+    availableAt: string;
+};
+export type ClaimWorkflowJobsInput = {
+    workerId: string;
+    limit: number;
+    leaseMs: number;
+    tenantId?: string;
+    workspaceId?: string;
+    now?: string;
+};
+export type CompleteWorkflowJobInput = {
+    jobId: string;
+    leaseToken: string;
+};
+export type FailWorkflowJobInput = {
+    jobId: string;
+    leaseToken: string;
+    error: string;
+    retryAt?: string;
+};
 export interface ObservabilityStore {
     read(): Promise<DashboardData>;
     listAgents(): Promise<Agent[]>;
@@ -67,4 +119,9 @@ export interface ObservabilityStore {
     upsertRun(run: Run): Promise<void>;
     listRunEvents(runId: string): Promise<RunEvent[]>;
     appendRunEvent(runEvent: RunEvent): Promise<void>;
+    enqueueWorkflowJob(input: WorkflowQueueJobCreateInput): Promise<WorkflowQueueJob>;
+    claimWorkflowJobs(input: ClaimWorkflowJobsInput): Promise<WorkflowQueueJob[]>;
+    completeWorkflowJob(input: CompleteWorkflowJobInput): Promise<void>;
+    failWorkflowJob(input: FailWorkflowJobInput): Promise<void>;
+    getWorkflowJob(jobId: string): Promise<WorkflowQueueJob | undefined>;
 }

@@ -11,13 +11,6 @@ Read these files in order:
 3. `/Users/brianchuang/agent/packages/agent-core/docs/ARCHITECTURE.md`
 4. `/Users/brianchuang/agent/packages/agent-core/docs/ROADMAP.md`
 5. `/Users/brianchuang/agent/packages/agent-core/docs/SCHEMA_RETENTION.md`
-6. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/README.md`
-7. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/01-contracts-and-validation.md`
-8. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/02-planner-loop-and-tool-registry.md`
-9. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/03-persistence-and-replayability.md`
-10. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/04-action-adapters-idempotency-and-retries.md`
-11. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/05-safety-approvals-and-policy-audit.md`
-12. `/Users/brianchuang/agent/packages/agent-core/docs/archive/issues/06-evaluation-observability-and-scalability.md`
 
 ## Context Rules
 
