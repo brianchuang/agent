@@ -66,16 +66,16 @@ Memory tools:
 ## Waiting-Signal Notifications
 
 When a workflow pauses in `waiting_signal`, the worker can escalate the question via tenant messaging settings.
-Current channel support: Slack.
+Current channel support: `web_ui` (default fallback) and Slack (optional).
 
 Environment variables:
 
-- `WAITING_SIGNAL_NOTIFIER=slack`
-- `SLACK_BOT_TOKEN` (bot token with `chat:write`)
+- `WAITING_SIGNAL_NOTIFIER` (optional; supports `web_ui` or `slack`)
+- `SLACK_BOT_TOKEN` (required only when `WAITING_SIGNAL_NOTIFIER=slack`)
 - Optional fallback only: `SLACK_DEFAULT_CHANNEL` (fallback channel ID, e.g. `C123...`)
 - Optional fallback only: `SLACK_CHANNEL_BY_SCOPE_JSON` to route by tenant/workspace.
   - Format: `{"tenantId:workspaceId":"C123..."}`.
-- Optional fallback channel order: `WAITING_SIGNAL_NOTIFIER_CASCADE` (comma-separated, currently `slack` only).
+- Optional fallback channel order: `WAITING_SIGNAL_NOTIFIER_CASCADE` (comma-separated; supports `web_ui,slack`).
 - Optional: `AGENT_DASHBOARD_BASE_URL` to include a run link in the Slack message.
 
 Tenant settings are stored in `tenant_messaging_settings`:

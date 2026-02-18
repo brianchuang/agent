@@ -245,3 +245,149 @@ test("env notifier falls back to tenant default settings when workspace config i
     globalThis.fetch = originalFetch;
   }
 });
+
+test("notifier falls back to web_ui when slack delivery fails", async () => {
+  const persisted: Array<{ channelType: string; threadId: string; channelId: string }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL) => {
+    const u = String(url);
+    if (u === "https://slack.com/api/chat.postMessage") {
+      return new Response(
+        JSON.stringify({ ok: true, ts: "1730000000.123456", channel: "C123456" }),
+        { status: 200 }
+      );
+    }
+    if (u === "https://slack.com/api/conversations.join") {
+      return new Response(JSON.stringify({ ok: false, error: "missing_scope" }), { status: 200 });
+    }
+    if (u === "https://slack.com/api/auth.test") {
+      return new Response(JSON.stringify({ ok: true, team_id: "TTEAM123" }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch URL: ${u}`);
+  }) as typeof fetch;
+
+  try {
+    const notifier = createSlackWaitingSignalNotifier({
+      store: {
+        async getTenantMessagingSettings() {
+          return {
+            tenantId: "tenant-a",
+            workspaceId: "workspace-a",
+            notifierCascade: ["slack"],
+            slack: {
+              enabled: true,
+              defaultChannel: "C-ABC"
+            }
+          };
+        },
+        async upsertWorkflowMessageThread(input) {
+          persisted.push({
+            channelType: input.channelType,
+            threadId: input.threadId,
+            channelId: input.channelId
+          });
+          return {
+            id: "thread-fallback",
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            workflowId: input.workflowId,
+            runId: input.runId,
+            channelType: input.channelType,
+            channelId: input.channelId,
+            rootMessageId: input.rootMessageId,
+            threadId: input.threadId,
+            status: "active",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+        }
+      },
+      config: {
+        botToken: "xoxb-test",
+        defaultChannel: "C-FALLBACK",
+        channelByScope: {},
+        fallbackCascade: ["web_ui", "slack"]
+      }
+    });
+
+    const result = await notifier.notifyWaitingSignal({
+      runId: "run-1",
+      jobId: "job-1",
+      workflowId: "wf-1",
+      threadId: "thread-1",
+      tenantId: "tenant-a",
+      workspaceId: "workspace-a",
+      waitingQuestion: "Needs label"
+    });
+
+    assert.deepEqual(result, {
+      channel: "web_ui",
+      target: "tenant-a/workspace-a",
+      channelId: "workspace-a",
+      messageId: "run-1",
+      threadId: "thread-1"
+    });
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0]?.channelType, "web_ui");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("env factory defaults to web_ui fallback when notifier is unset", async () => {
+  delete process.env.WAITING_SIGNAL_NOTIFIER;
+  delete process.env.SLACK_BOT_TOKEN;
+
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    throw new Error("unexpected fetch");
+  }) as typeof fetch;
+
+  try {
+    const notifier = createSlackWaitingSignalNotifierFromEnv({
+      async getTenantMessagingSettings() {
+        return undefined;
+      },
+      async upsertWorkflowMessageThread(input) {
+        return {
+          id: "thread-web-ui",
+          tenantId: input.tenantId,
+          workspaceId: input.workspaceId,
+          workflowId: input.workflowId,
+          runId: input.runId,
+          channelType: input.channelType,
+          channelId: input.channelId,
+          rootMessageId: input.rootMessageId,
+          threadId: input.threadId,
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      }
+    });
+
+    assert.ok(notifier);
+    const result = await notifier.notifyWaitingSignal({
+      runId: "run-1",
+      jobId: "job-1",
+      workflowId: "wf-1",
+      threadId: "thread-1",
+      tenantId: "tenant-a",
+      workspaceId: "workspace-a",
+      waitingQuestion: "Which label?"
+    });
+
+    assert.deepEqual(result, {
+      channel: "web_ui",
+      target: "tenant-a/workspace-a",
+      channelId: "workspace-a",
+      messageId: "run-1",
+      threadId: "thread-1"
+    });
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
