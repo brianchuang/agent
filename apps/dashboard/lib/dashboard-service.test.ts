@@ -484,6 +484,17 @@ test("ingestSlackThreadReply deduplicates and queues user_input signal continuat
         workflow_id: "wf-waiting",
         thread_id: "thread-1"
       }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff2a",
+      runId: "run-waiting",
+      ts: "2026-02-17T00:01:00.000Z",
+      message: "Run waiting for signal",
+      payload: {
+        output: {
+          waitingQuestion: "Which label should I use?"
+        }
+      }
     })
   ];
   const store = createStoreFixture({
@@ -518,6 +529,9 @@ test("ingestSlackThreadReply deduplicates and queues user_input signal continuat
   if (first.status === "queued_signal") {
     assert.equal(first.workflowId, "wf-waiting");
   }
+  const signalEvents = await store.listRunEvents("run-waiting");
+  const signalQueuedEvent = signalEvents.find((event) => event.message === "Inbound user input signal queued");
+  assert.equal(signalQueuedEvent?.payload?.message, "Use this project label");
 
   const second = await service.ingestSlackThreadReply({
     providerTeamId: "T123",
@@ -540,4 +554,440 @@ test("ingestSlackThreadReply deduplicates and queues user_input signal continuat
   const queuedJobs = await store.listWorkflowJobs({ tenantId: "tenant-a", workspaceId: "workspace-a" });
   assert.equal(queuedJobs.length, 1);
   assert.equal(queuedJobs[0]?.workflowId, "wf-waiting");
+});
+
+test("ingestSlackThreadReply returns not_waiting when run is queued but no waiting signal has been emitted", async () => {
+  const run = makeRun({
+    id: "run-not-waiting",
+    agentId: "agent-a",
+    status: "queued"
+  });
+  const runEvents = [
+    makeEvent({
+      runId: "run-not-waiting",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Collect statuses",
+        workflow_id: "wf-not-waiting",
+        thread_id: "thread-2"
+      }
+    })
+  ];
+  const store = createStoreFixture({
+    runs: [run],
+    runEvents
+  });
+  await store.upsertWorkflowMessageThread({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    workflowId: "wf-not-waiting",
+    runId: "run-not-waiting",
+    channelType: "slack",
+    channelId: "C123",
+    rootMessageId: "1730000000.222222",
+    threadId: "1730000000.222222",
+    providerTeamId: "T123",
+    status: "active"
+  });
+  const service = createDashboardService(store);
+
+  const result = await service.ingestSlackThreadReply({
+    providerTeamId: "T123",
+    eventId: "Ev-2",
+    eventTs: "1730000000.999999",
+    channelId: "C123",
+    threadId: "1730000000.222222",
+    messageId: "1730000001.000002",
+    userId: "U123",
+    message: "Use this project label"
+  });
+
+  assert.equal(result.status, "not_waiting");
+  const queuedSignals = await store.listPendingWorkflowSignals({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    workflowId: "wf-not-waiting"
+  });
+  assert.equal(queuedSignals.length, 0);
+});
+
+test("inbox thread summaries include unread agent messages and support mark-as-read", async () => {
+  const run = makeRun({ id: "run-inbox", status: "queued", agentId: "agent-a" });
+  const runEvents = [
+    makeEvent({
+      runId: "run-inbox",
+      ts: "2026-02-18T10:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Summarize my day",
+        workflow_id: "wf-inbox",
+        thread_id: "thread-inbox"
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff1b",
+      runId: "run-inbox",
+      ts: "2026-02-18T10:01:00.000Z",
+      message: "Run waiting for signal",
+      payload: {
+        output: {
+          waitingQuestion: "Do you want me to include meetings?"
+        }
+      }
+    })
+  ];
+  const store = createStoreFixture({
+    runs: [run],
+    runEvents
+  });
+  const service = createDashboardService(store);
+
+  const beforeRead = await service.listInboxThreads({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a"
+  });
+  assert.equal(beforeRead.length, 1);
+  assert.equal(beforeRead[0]?.threadId, "thread-inbox");
+  assert.equal(beforeRead[0]?.unreadCount, 1);
+
+  await service.markInboxThreadRead({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    threadId: "thread-inbox",
+    readAt: "2026-02-18T10:02:00.000Z"
+  });
+
+  const afterRead = await service.listInboxThreads({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a"
+  });
+  assert.equal(afterRead.length, 1);
+  assert.equal(afterRead[0]?.unreadCount, 0);
+});
+
+test("inbox thread messages include user and agent entries in timestamp order", async () => {
+  const run = makeRun({ id: "run-thread", status: "queued", agentId: "agent-a" });
+  const runEvents = [
+    makeEvent({
+      runId: "run-thread",
+      ts: "2026-02-18T09:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Draft a summary",
+        workflow_id: "wf-thread",
+        thread_id: "thread-abc"
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff1c",
+      runId: "run-thread",
+      ts: "2026-02-18T09:01:00.000Z",
+      message: "Run waiting for signal",
+      payload: {
+        output: {
+          waitingQuestion: "Should this include blockers?"
+        }
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff1d",
+      runId: "run-thread",
+      ts: "2026-02-18T09:02:00.000Z",
+      message: "Inbound user input signal queued",
+      payload: {
+        signalId: "sig-1",
+        message: "Yes, include blockers."
+      }
+    })
+  ];
+  const store = createStoreFixture({ runs: [run], runEvents });
+  const service = createDashboardService(store);
+
+  const messages = await service.listInboxMessages(
+    {
+      tenantId: "tenant-a",
+      workspaceId: "workspace-a"
+    },
+    "thread-abc"
+  );
+
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0]?.role, "user");
+  assert.equal(messages[1]?.role, "agent");
+  assert.equal(messages[2]?.role, "user");
+  assert.equal(messages[2]?.text, "Yes, include blockers.");
+});
+
+test("sendInboxMessage reuses thread and agent when continuing an existing conversation", async () => {
+  const run = makeRun({ id: "run-prev", status: "queued", agentId: "agent-a" });
+  const runEvents = [
+    makeEvent({
+      runId: "run-prev",
+      ts: "2026-02-18T08:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Initial request",
+        workflow_id: "wf-prev",
+        thread_id: "thread-shared"
+      }
+    })
+  ];
+  const store = createStoreFixture({
+    agents: [makeAgent({ id: "agent-a" })],
+    runs: [run],
+    runEvents
+  });
+  const service = createDashboardService(store);
+
+  const result = await service.sendInboxMessage({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    threadId: "thread-shared",
+    message: "Follow-up question"
+  });
+
+  assert.equal(result.threadId, "thread-shared");
+  assert.equal(result.run.agentId, "agent-a");
+  assert.equal(result.events[0]?.payload?.thread_id, "thread-shared");
+});
+
+test("sendInboxMessage resumes existing waiting objective when thread is awaiting user input", async () => {
+  const run = makeRun({ id: "run-waiting-reply", status: "queued", agentId: "agent-a" });
+  const runEvents = [
+    makeEvent({
+      runId: "run-waiting-reply",
+      ts: "2026-02-18T08:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Initial request",
+        workflow_id: "wf-waiting-reply",
+        thread_id: "thread-shared"
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff9a",
+      runId: "run-waiting-reply",
+      ts: "2026-02-18T08:01:00.000Z",
+      message: "Run waiting for signal",
+      payload: {
+        output: {
+          waitingQuestion: "Need your preference?"
+        }
+      }
+    })
+  ];
+  const store = createStoreFixture({
+    agents: [makeAgent({ id: "agent-a" })],
+    runs: [run],
+    runEvents
+  });
+  const service = createDashboardService(store);
+
+  const result = await service.sendInboxMessage({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    threadId: "thread-shared",
+    message: "Use option A."
+  });
+
+  assert.equal(result.threadId, "thread-shared");
+  assert.equal(result.run.id, "run-waiting-reply");
+  const runs = await service.listRuns({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a"
+  });
+  assert.equal(runs.length, 1);
+  const queuedSignals = await store.listPendingWorkflowSignals({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    workflowId: "wf-waiting-reply"
+  });
+  assert.equal(queuedSignals.length, 1);
+  assert.equal((queuedSignals[0]?.payload as { message?: string } | undefined)?.message, "Use option A.");
+});
+
+test("sendInboxMessage creates a new objective when thread is not currently waiting", async () => {
+  const run = makeRun({ id: "run-prev", status: "success", agentId: "agent-a" });
+  const runEvents = [
+    makeEvent({
+      runId: "run-prev",
+      ts: "2026-02-18T08:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Initial request",
+        workflow_id: "wf-prev",
+        thread_id: "thread-shared"
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff9b",
+      runId: "run-prev",
+      ts: "2026-02-18T08:02:00.000Z",
+      message: "Run completed",
+      payload: {
+        output: {
+          result: "Done"
+        }
+      }
+    })
+  ];
+  const store = createStoreFixture({
+    agents: [makeAgent({ id: "agent-a" })],
+    runs: [run],
+    runEvents
+  });
+  const service = createDashboardService(store);
+
+  const result = await service.sendInboxMessage({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a",
+    threadId: "thread-shared",
+    message: "New request after completion"
+  });
+
+  assert.equal(result.threadId, "thread-shared");
+  assert.notEqual(result.run.id, "run-prev");
+  const runs = await service.listRuns({
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a"
+  });
+  assert.equal(runs.length, 2);
+});
+
+test("inbox thread messages project agent replies from run completion output", async () => {
+  const run = makeRun({ id: "run-completed", status: "success", agentId: "agent-a" });
+  const runEvents = [
+    makeEvent({
+      runId: "run-completed",
+      ts: "2026-02-18T14:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Write status update",
+        workflow_id: "wf-completed",
+        thread_id: "thread-completed"
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ffaa",
+      runId: "run-completed",
+      ts: "2026-02-18T14:01:00.000Z",
+      message: "Run completed",
+      payload: {
+        output: {
+          result: {
+            message: "Here is your status update."
+          }
+        }
+      }
+    })
+  ];
+  const store = createStoreFixture({ runs: [run], runEvents });
+  const service = createDashboardService(store);
+
+  const messages = await service.listInboxMessages(
+    {
+      tenantId: "tenant-a",
+      workspaceId: "workspace-a"
+    },
+    "thread-completed"
+  );
+
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1]?.role, "agent");
+  assert.equal(messages[1]?.text, "Here is your status update.");
+});
+
+test("listAgentSummaries maps waiting runs to waiting_on_you with required action", async () => {
+  const run = makeRun({
+    id: "run-waiting-summary",
+    agentId: "agent-a",
+    status: "queued",
+    startedAt: "2026-02-18T11:00:00.000Z"
+  });
+  const runEvents = [
+    makeEvent({
+      runId: "run-waiting-summary",
+      ts: "2026-02-18T11:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Prepare my daily plan",
+        workflow_id: "wf-1",
+        thread_id: "thread-1"
+      }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff99",
+      runId: "run-waiting-summary",
+      ts: "2026-02-18T11:01:00.000Z",
+      message: "Run waiting for signal",
+      payload: {
+        output: {
+          waitingQuestion: "Should I include calendar events?"
+        }
+      }
+    })
+  ];
+  const store = createStoreFixture({ runs: [run], runEvents });
+  const service = createDashboardService(store);
+
+  const summaries = await service.listAgentSummaries();
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0]?.status, "waiting_on_you");
+  assert.equal(summaries[0]?.requiredUserAction, "Should I include calendar events?");
+  assert.equal(summaries[0]?.objectiveSummary, "Prepare my daily plan");
+});
+
+test("listAgentSummaries maps failed runs to error", async () => {
+  const run = makeRun({
+    id: "run-failed-summary",
+    agentId: "agent-a",
+    status: "failed",
+    startedAt: "2026-02-18T12:00:00.000Z"
+  });
+  const runEvents = [
+    makeEvent({
+      runId: "run-failed-summary",
+      ts: "2026-02-18T12:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Summarize inbox",
+        workflow_id: "wf-2",
+        thread_id: "thread-2"
+      }
+    })
+  ];
+  const store = createStoreFixture({ runs: [run], runEvents });
+  const service = createDashboardService(store);
+
+  const summaries = await service.listAgentSummaries();
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0]?.status, "error");
+});
+
+test("listAgentSummaries maps queued non-waiting runs to active", async () => {
+  const run = makeRun({
+    id: "run-active-summary",
+    agentId: "agent-a",
+    status: "queued",
+    startedAt: "2026-02-18T13:00:00.000Z"
+  });
+  const runEvents = [
+    makeEvent({
+      runId: "run-active-summary",
+      ts: "2026-02-18T13:00:00.000Z",
+      message: "Run queued",
+      payload: {
+        objective_prompt: "Find open tasks",
+        workflow_id: "wf-3",
+        thread_id: "thread-3"
+      }
+    })
+  ];
+  const store = createStoreFixture({ runs: [run], runEvents });
+  const service = createDashboardService(store);
+
+  const summaries = await service.listAgentSummaries();
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0]?.status, "active");
+  assert.equal(summaries[0]?.requiredUserAction, undefined);
 });
