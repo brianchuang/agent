@@ -35,7 +35,16 @@ const DEFAULT_LLM_MODEL =
   process.env.LLM_MODEL ?? process.env.GROQ_MODEL ?? process.env.OPENAI_MODEL ?? "llama-3.3-70b-versatile";
 const DEFAULT_LLM_TEMPERATURE = Number.parseFloat(process.env.LLM_TEMPERATURE ?? "0.1");
 const DEFAULT_GROQ_MODEL_CHAIN =
-  process.env.GROQ_MODEL_CHAIN ?? "llama-3.3-70b-versatile,llama-3.1-8b-instant";
+  process.env.GROQ_MODEL_CHAIN ??
+  [
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "qwen/qwen3-32b",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "llama-3.1-8b-instant"
+  ].join(",");
 const DEFAULT_OPENAI_MODEL_CHAIN = process.env.OPENAI_MODEL_CHAIN ?? "gpt-4o-mini";
 const DEFAULT_OPENROUTER_MODEL_CHAIN = process.env.OPENROUTER_MODEL_CHAIN ?? "openai/gpt-4o-mini";
 const SHORT_TERM_STEP_LIMIT = Number.parseInt(process.env.SHORT_TERM_STEP_LIMIT ?? "6", 10);

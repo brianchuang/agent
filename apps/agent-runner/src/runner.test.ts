@@ -69,6 +69,9 @@ test("queue runner claims queued jobs and marks run success", async () => {
       async failWorkflowJob() {
         throw new Error("unexpected fail");
       },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
       async upsertRun(run) {
         const existing = state.runs.find((item) => item.id === run.id);
         if (existing) {
@@ -123,6 +126,9 @@ test("queue runner isolates claim scope per tenant/workspace", async () => {
       async failWorkflowJob() {
         return;
       },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
       async upsertRun() {
         return;
       },
@@ -146,4 +152,153 @@ test("queue runner isolates claim scope per tenant/workspace", async () => {
   assert.equal(result.claimed, 1);
   assert.equal(state.queueJobs.find((job) => job.id === "job-1")?.status, "claimed");
   assert.equal(state.queueJobs.find((job) => job.id === "job-2")?.status, "queued");
+});
+
+test("queue runner keeps run queued for retryable engine failures", async () => {
+  const state = createMemoryStore();
+  const runner = createQueueRunner({
+    store: {
+      async claimWorkflowJobs() {
+        const job = state.queueJobs[0];
+        job.status = "claimed";
+        job.leaseToken = "lease-1";
+        job.attemptCount = 1;
+        return [{ ...job }];
+      },
+      async completeWorkflowJob() {
+        throw new Error("unexpected complete");
+      },
+      async failWorkflowJob({ jobId, leaseToken, error, retryAt }) {
+        const job = state.queueJobs.find((item) => item.id === jobId);
+        assert.ok(job);
+        assert.equal(job.leaseToken, leaseToken);
+        job.status = "queued";
+        job.lastError = error;
+        assert.ok(retryAt);
+      },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
+      async upsertRun(run) {
+        const existing = state.runs.find((item) => item.id === run.id);
+        if (existing) {
+          Object.assign(existing, run);
+        }
+      },
+      async getRun(runId: string) {
+        return state.runs.find((run) => run.id === runId);
+      },
+      async appendRunEvent(event) {
+        state.runEvents.push(event);
+      }
+    },
+    execute: async () => {
+      throw new Error("temporary provider outage");
+    }
+  });
+
+  const result = await runner.runOnce({ workerId: "worker-a", limit: 10, leaseMs: 30_000 });
+  assert.equal(result.claimed, 1);
+  assert.equal(result.completed, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(state.queueJobs[0].status, "queued");
+  assert.equal(state.runs[0].status, "queued");
+  assert.equal(state.runs[0].retries, 1);
+});
+
+test("queue runner marks run failed only when queue marks job terminal failed", async () => {
+  const state = createMemoryStore();
+  state.queueJobs[0].maxAttempts = 1;
+  const runner = createQueueRunner({
+    store: {
+      async claimWorkflowJobs() {
+        const job = state.queueJobs[0];
+        job.status = "claimed";
+        job.leaseToken = "lease-terminal";
+        job.attemptCount = 1;
+        return [{ ...job }];
+      },
+      async completeWorkflowJob() {
+        throw new Error("unexpected complete");
+      },
+      async failWorkflowJob({ jobId, leaseToken, error }) {
+        const job = state.queueJobs.find((item) => item.id === jobId);
+        assert.ok(job);
+        assert.equal(job.leaseToken, leaseToken);
+        job.status = "failed";
+        job.lastError = error;
+      },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
+      async upsertRun(run) {
+        const existing = state.runs.find((item) => item.id === run.id);
+        if (existing) {
+          Object.assign(existing, run);
+        }
+      },
+      async getRun(runId: string) {
+        return state.runs.find((run) => run.id === runId);
+      },
+      async appendRunEvent(event) {
+        state.runEvents.push(event);
+      }
+    },
+    execute: async () => {
+      throw new Error("permanent validation error");
+    }
+  });
+
+  const result = await runner.runOnce({ workerId: "worker-a", limit: 10, leaseMs: 30_000 });
+  assert.equal(result.failed, 1);
+  assert.equal(state.queueJobs[0].status, "failed");
+  assert.equal(state.runs[0].status, "failed");
+  assert.equal(state.runs[0].errorSummary, "permanent validation error");
+});
+
+test("queue runner does not mark run success when completion is not acknowledged by lease", async () => {
+  const state = createMemoryStore();
+  const runner = createQueueRunner({
+    store: {
+      async claimWorkflowJobs() {
+        const job = state.queueJobs[0];
+        job.status = "claimed";
+        job.leaseToken = "lease-mismatch";
+        return [{ ...job }];
+      },
+      async completeWorkflowJob() {
+        // Simulate stale lease/no-op update.
+        return;
+      },
+      async failWorkflowJob({ jobId, leaseToken, error }) {
+        const job = state.queueJobs.find((item) => item.id === jobId);
+        assert.ok(job);
+        assert.equal(job.leaseToken, leaseToken);
+        job.status = "queued";
+        job.lastError = error;
+      },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
+      async upsertRun(run) {
+        const existing = state.runs.find((item) => item.id === run.id);
+        if (existing) {
+          Object.assign(existing, run);
+        }
+      },
+      async getRun(runId: string) {
+        return state.runs.find((run) => run.id === runId);
+      },
+      async appendRunEvent(event) {
+        state.runEvents.push(event);
+      }
+    },
+    execute: async () => ({ ok: true })
+  });
+
+  const result = await runner.runOnce({ workerId: "worker-a", limit: 10, leaseMs: 30_000 });
+  assert.equal(result.completed, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(state.runs[0].status, "queued");
+  assert.equal(state.runs[0].retries, 1);
 });

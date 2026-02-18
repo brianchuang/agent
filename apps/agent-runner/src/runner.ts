@@ -12,6 +12,7 @@ export type QueueRunnerDependencies = {
     | "claimWorkflowJobs"
     | "completeWorkflowJob"
     | "failWorkflowJob"
+    | "getWorkflowJob"
     | "getRun"
     | "upsertRun"
     | "appendRunEvent"
@@ -100,6 +101,12 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
             jobId: job.id,
             leaseToken: job.leaseToken ?? ""
           });
+          const completedJob = await deps.store.getWorkflowJob(job.id);
+          if (!completedJob || completedJob.status !== "completed") {
+            throw new Error(
+              `Workflow queue completion not acknowledged for ${job.workflowId} (jobId=${job.id})`
+            );
+          }
 
           const finishedRun = await deps.store.getRun(job.runId);
           if (finishedRun) {
@@ -135,24 +142,36 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
           failed += 1;
           const message = error instanceof Error ? error.message : String(error);
 
-          const failedRun = await deps.store.getRun(job.runId);
-          if (failedRun) {
-            const endedAt = new Date().toISOString();
-            await deps.store.upsertRun({
-              ...failedRun,
-              status: "failed",
-              endedAt,
-              errorSummary: message,
-              latencyMs: Math.max(0, new Date(endedAt).getTime() - new Date(failedRun.startedAt).getTime())
-            });
-          }
-
           await deps.store.failWorkflowJob({
             jobId: job.id,
             leaseToken: job.leaseToken ?? "",
             error: message,
             retryAt: new Date(Date.now() + 5_000).toISOString()
           });
+          const failedJob = await deps.store.getWorkflowJob(job.id);
+
+          const failedRun = await deps.store.getRun(job.runId);
+          if (failedRun && failedJob) {
+            const endedAt = new Date().toISOString();
+            if (failedJob.status === "failed") {
+              await deps.store.upsertRun({
+                ...failedRun,
+                status: "failed",
+                endedAt,
+                errorSummary: message,
+                latencyMs: Math.max(
+                  0,
+                  new Date(endedAt).getTime() - new Date(failedRun.startedAt).getTime()
+                )
+              });
+            } else if (failedJob.status === "queued") {
+              await deps.store.upsertRun({
+                ...failedRun,
+                status: "queued",
+                retries: failedRun.retries + 1
+              });
+            }
+          }
           await deps.store.appendRunEvent({
             id: uuidv7(),
             runId: job.runId,
