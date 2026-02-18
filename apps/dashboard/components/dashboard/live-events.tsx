@@ -1,6 +1,7 @@
 import { RunEvent } from "@agent/observability";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { formatDateTime } from "@/lib/format-date-time";
 
 export function LiveEvents({ events }: { events: RunEvent[] }) {
   return (
@@ -14,7 +15,7 @@ export function LiveEvents({ events }: { events: RunEvent[] }) {
             <div>
               <p className="text-sm font-medium">{event.message}</p>
               <p className="text-xs text-muted-foreground">
-                {event.ts} | {event.runId}
+                {formatDateTime(event.ts)} | {event.runId}
               </p>
             </div>
             <StatusBadge status={event.level} />

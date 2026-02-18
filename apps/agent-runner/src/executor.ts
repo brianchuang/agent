@@ -14,7 +14,6 @@ import type { JsonValue, WorkflowQueueJob, ObservabilityStore } from "@agent/obs
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
 import { uuidv7 } from "uuidv7";
-import { createPlannerScheduleWorkflowTool } from "./schedulerTool";
 import {
   createMemorySearchTool,
   createMemoryWriteTool,
@@ -278,7 +277,6 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
           "gmail_get_thread",
           "gmail_create_draft",
           "gmail_send_email",
-          "planner_schedule_workflow",
           "memory_write",
           "memory_search"
         ]
@@ -291,18 +289,6 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
       if (enabledTools.has("gmail_get_thread")) toolRegistry.registerTool(GmailGetThreadTool);
       if (enabledTools.has("gmail_create_draft")) toolRegistry.registerTool(GmailCreateDraftTool);
       if (enabledTools.has("gmail_send_email")) toolRegistry.registerTool(GmailSendEmailTool);
-      if (enabledTools.has("planner_schedule_workflow")) {
-        toolRegistry.registerTool(
-          createPlannerScheduleWorkflowTool({
-            store: deps.store,
-            defaults: {
-              agentId: job.agentId,
-              objectivePrompt: job.objectivePrompt,
-              threadId: job.threadId
-            }
-          })
-        );
-      }
       if (enabledTools.has("memory_write")) {
         toolRegistry.registerTool(createMemoryWriteTool({ store: deps.store }));
       }
@@ -356,8 +342,8 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
           "- Prefer tool_call when a tool can make progress.",
           "- Use memory_search when you need additional historical facts not in the working set.",
           "- Use memory_write to persist durable facts that should help future runs.",
-          "- For deferred or recurring work, call planner_schedule_workflow first, then complete.",
-          "- Use ask_user when missing required user details.",
+          "- For deferred or recurring work, complete with an explicit execution plan and required follow-up timing.",
+          "- Use ask_user only when no available tool can make progress and user input is strictly required.",
           "- Use complete only when objective is done or cannot proceed safely.",
           "",
           "Planner Input:",
@@ -596,7 +582,12 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
           return {
             status: result.status,
             workflowId: job.workflowId,
-            result: (result.completion || "No completion output") as any
+            waitingQuestion: result.waitingQuestion as any,
+            result:
+              (result.completion ??
+                (result.status === "waiting_signal"
+                  ? { waitingQuestion: result.waitingQuestion ?? "Waiting for additional input or signal." }
+                  : "No completion output")) as any
           };
       } catch (error) {
           console.error("Agent Execution Failed:", error);

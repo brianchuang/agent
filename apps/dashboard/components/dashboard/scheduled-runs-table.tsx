@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ScheduledRun } from "@/lib/dashboard-service";
+import { formatDateTime } from "@/lib/format-date-time";
 
 export function ScheduledRunsTable({ runs }: { runs: ScheduledRun[] }) {
   return (
@@ -29,7 +30,7 @@ export function ScheduledRunsTable({ runs }: { runs: ScheduledRun[] }) {
                   <TableCell className="font-medium">
                     {run.scheduleType === "cron" ? `cron (${run.cronExpression})` : "one-off"}
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{run.availableAt}</TableCell>
+                  <TableCell className="text-xs">{formatDateTime(run.availableAt)}</TableCell>
                   <TableCell className="max-w-[420px] truncate">{run.objectivePrompt}</TableCell>
                   <TableCell>
                     <Link href={`/runs/${run.runId}`} className="hover:underline">

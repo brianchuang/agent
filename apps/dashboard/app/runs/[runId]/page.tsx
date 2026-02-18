@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/dashboard/status-badge";
 import { RunTimeline } from "@/components/dashboard/run-timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getRun, listRunEvents } from "@/lib/dashboard-service";
+import { formatDateTime } from "@/lib/format-date-time";
 
 import { auth } from "@/lib/auth";
 
@@ -51,13 +52,13 @@ export default async function RunDetailPage({ params, searchParams }: Params) {
             <CardHeader>
               <CardTitle>Started</CardTitle>
             </CardHeader>
-            <CardContent>{run.startedAt}</CardContent>
+            <CardContent>{formatDateTime(run.startedAt)}</CardContent>
           </Card>
           <Card>
             <CardHeader>
               <CardTitle>Ended</CardTitle>
             </CardHeader>
-            <CardContent>{run.endedAt ?? "Running"}</CardContent>
+            <CardContent>{run.endedAt ? formatDateTime(run.endedAt) : "Running"}</CardContent>
           </Card>
           <Card>
             <CardHeader>

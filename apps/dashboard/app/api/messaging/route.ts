@@ -40,3 +40,41 @@ export async function PUT(req: Request) {
   });
   return NextResponse.json({ data });
 }
+
+export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const contentType = req.headers.get("content-type") ?? "";
+  let workspaceId: string | undefined;
+  let slackEnabled = false;
+  let slackDefaultChannel: string | undefined;
+
+  if (contentType.includes("application/json")) {
+    const body = (await req.json()) as {
+      workspaceId?: string;
+      slack?: { enabled?: boolean; defaultChannel?: string };
+    };
+    workspaceId = body.workspaceId;
+    slackEnabled = Boolean(body.slack?.enabled);
+    slackDefaultChannel = body.slack?.defaultChannel;
+  } else {
+    const form = await req.formData();
+    workspaceId = String(form.get("workspaceId") ?? "") || undefined;
+    slackEnabled = form.get("slackEnabled") === "on" || form.get("slackEnabled") === "true";
+    slackDefaultChannel = String(form.get("slackDefaultChannel") ?? "") || undefined;
+  }
+
+  const data = await upsertTenantMessagingSettings({
+    tenantId: session.user.id,
+    workspaceId,
+    notifierCascade: ["slack"],
+    slack: {
+      enabled: slackEnabled,
+      defaultChannel: slackDefaultChannel
+    }
+  });
+  return NextResponse.json({ data });
+}

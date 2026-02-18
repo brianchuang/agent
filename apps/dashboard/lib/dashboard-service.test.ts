@@ -322,13 +322,13 @@ test("listScheduledRuns returns one-off and cron upcoming jobs", async () => {
   const runEvents: RunEvent[] = [
     makeEvent({
       runId: "run-one-off",
-      message: "Run queued by planner schedule tool",
+      message: "Run queued",
       payload: { available_at: queueJobs[0].availableAt, cron: null }
     }),
     makeEvent({
       id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff1b",
       runId: "run-cron",
-      message: "Run queued by planner schedule tool",
+      message: "Run queued",
       payload: { available_at: queueJobs[1].availableAt, cron: "0 9 * * 1-5" }
     })
   ];

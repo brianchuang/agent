@@ -1,40 +1,26 @@
-# Planner-Driven Scheduling Architecture
+# Control-Plane Scheduling Architecture
 
 ## Goal
-Allow the planner to schedule future work (one-shot or recurring) with a tool call, without introducing a second orchestration system.
+Allow one-shot and recurring work through queue semantics while keeping planner tools primitive-only.
 
 ## Core design
-1. Planner gets a first-class scheduling tool: `planner_schedule_workflow`.
-2. The tool writes directly to the existing `workflow_queue_jobs` table using `available_at`.
-3. Worker claims queued jobs when `available_at <= now` and executes them through the normal planner loop.
+1. Scheduling is handled by control-plane dispatch and queue metadata.
+2. Queue jobs are materialized in `workflow_queue_jobs` with `available_at`.
+3. Worker claims queued jobs when `available_at <= now` and executes through the normal planner loop.
 
 ## Why this design
 - Reuses existing queue semantics (`queued -> claimed -> completed|failed`).
 - Maintains one execution path for immediate and deferred runs.
 - Preserves observability via existing run/run-event tables.
-- Avoids coupling scheduler logic into planner runtime internals.
-
-## Tool contract
-`planner_schedule_workflow` accepts exactly one strategy:
-- `runAt` (ISO datetime)
-- `delaySeconds`
-- `cron` (5-field UTC cron: minute hour day-of-month month day-of-week)
-
-Optional:
-- `objectivePrompt` override
-- `threadId` override
-- `maxAttempts`
-
-Returns scheduled workflow/request IDs and resolved `availableAt`.
+- Keeps planner/runtime contracts free of orchestration macros.
 
 ## Recurrence model
-- `cron` schedules the next occurrence only.
-- Recurrence is "self-perpetuating": each execution should schedule the next one.
-- This keeps recurrence explicit in planner policy and audit traces.
+- Recurrence is represented as queue/control-plane scheduling metadata.
+- Planner intents stay focused on primitive tool calls, asking users, and completion output.
 
 ## Idempotency
-- Scheduled `requestId` is deterministic from parent workflow + step + target time + objective prompt.
-- Retries of the same planner step converge on the same `requestId`, preventing accidental duplicate schedules.
+- Scheduled `requestId` remains deterministic where control-plane enqueues are derived from prior workflow state.
+- Retries of the same enqueue operation converge on the same identity inputs to prevent duplicates.
 
 ## Operational behavior
 - Scheduled runs are visible as normal runs with queue and state events.

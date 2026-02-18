@@ -1,6 +1,7 @@
 import { RunEvent } from "@agent/observability";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { formatDateTime } from "@/lib/format-date-time";
 
 export function RunTimeline({ events }: { events: RunEvent[] }) {
   return (
@@ -18,7 +19,7 @@ export function RunTimeline({ events }: { events: RunEvent[] }) {
                 <p className="font-medium">{event.message}</p>
                 <StatusBadge status={event.level} />
               </div>
-              <p className="font-mono text-xs text-muted-foreground">{event.ts}</p>
+              <p className="text-xs text-muted-foreground">{formatDateTime(event.ts)}</p>
               <pre className="mt-3 overflow-auto rounded-md bg-muted p-3 text-xs">
                 {JSON.stringify(event.payload, null, 2)}
               </pre>
