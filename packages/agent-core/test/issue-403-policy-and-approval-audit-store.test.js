@@ -6,7 +6,7 @@ const { InMemoryAgentPersistence } = require("../dist/core/persistence/repositor
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -44,7 +44,7 @@ test("ISSUE-403: audit API reconstructs full decision chain by request with tena
 
   await runtime.runPlannerLoop(
     objectiveRequest({
-      requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      requestId: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
       workflowId: "wf-403-approval"
     }),
     {
@@ -78,7 +78,7 @@ test("ISSUE-403: audit API reconstructs full decision chain by request with tena
   );
 
   await runtime.resumeWithSignal({
-    signalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    signalId: "cccccccc-cccc-7ccc-8ccc-cccccccccccc",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -93,7 +93,7 @@ test("ISSUE-403: audit API reconstructs full decision chain by request with tena
 
   await runtime.runPlannerLoop(
     objectiveRequest({
-      requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      requestId: "dddddddd-dddd-7ddd-8ddd-dddddddddddd",
       workflowId: "wf-403-approval",
       occurredAt: "2026-02-17T00:02:00.000Z"
     }),
@@ -123,7 +123,7 @@ test("ISSUE-403: audit API reconstructs full decision chain by request with tena
   const blockedAudit = persistence.listAuditRecords({
     tenantId: "tenant-a",
     workspaceId: "agent",
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"
   });
   assert.equal(blockedAudit.length, 2);
   assert.deepEqual(
@@ -131,7 +131,7 @@ test("ISSUE-403: audit API reconstructs full decision chain by request with tena
     ["policy_block", "workflow_terminal_failed"]
   );
   assert.ok(blockedAudit.every((record) => typeof record.stepNumber === "number"));
-  assert.ok(blockedAudit.every((record) => record.requestId === "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+  assert.ok(blockedAudit.every((record) => record.requestId === "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"));
 
   const approvalAudit = persistence.listAuditRecords({
     tenantId: "tenant-a",
@@ -140,7 +140,7 @@ test("ISSUE-403: audit API reconstructs full decision chain by request with tena
   });
   const resolved = approvalAudit.find((record) => record.eventType === "approval_approved");
   assert.ok(resolved);
-  assert.equal(resolved.signalCorrelationId, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  assert.equal(resolved.signalCorrelationId, "cccccccc-cccc-7ccc-8ccc-cccccccccccc");
   assert.ok(
     approvalAudit.some((record) => record.eventType === "approval_pending"),
     "expected pending approval audit row"

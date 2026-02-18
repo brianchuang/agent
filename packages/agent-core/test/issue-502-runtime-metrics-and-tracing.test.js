@@ -6,7 +6,7 @@ const { InMemoryAgentPersistence } = require("../dist/core/persistence/repositor
 
 function request(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -124,12 +124,12 @@ test("ISSUE-502: planner loop emits traceable request, policy, step, and termina
   assert.ok(metricEvents.some((event) => event.message === "Workflow terminal completed"));
 
   const requestCorrelationEvents = metricEvents.filter(
-    (event) => event.payload && event.payload.requestId === "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    (event) => event.payload && event.payload.requestId === "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"
   );
   assert.ok(requestCorrelationEvents.length > 0);
   assert.ok(
     requestCorrelationEvents.every(
-      (event) => event.correlationId === "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      (event) => event.correlationId === "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"
     )
   );
   assert.ok(
@@ -156,7 +156,7 @@ test("ISSUE-502: signal lifecycle metrics include delivered/resumed and dropped 
   });
 
   await runtime.resumeWithSignal({
-    signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    signalId: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -169,7 +169,7 @@ test("ISSUE-502: signal lifecycle metrics include delivered/resumed and dropped 
   await assert.rejects(
     () =>
       runtime.resumeWithSignal({
-        signalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        signalId: "cccccccc-cccc-7ccc-8ccc-cccccccccccc",
         schemaVersion: "v1",
         tenantId: "tenant-a",
         workspaceId: "agent",
@@ -229,6 +229,6 @@ test("ISSUE-502: planner validation failures are emitted as metrics with request
   const events = (await store.read()).runEvents;
   const validationEvent = events.find((event) => event.message === "Planner validation failure");
   assert.ok(validationEvent);
-  assert.equal(validationEvent.correlationId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  assert.equal(validationEvent.correlationId, "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
   assert.equal(validationEvent.payload.phase, "intent_validation");
 });

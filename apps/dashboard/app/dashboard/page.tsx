@@ -1,17 +1,19 @@
 import { HealthCards } from "@/components/dashboard/health-cards";
 import { LiveEvents } from "@/components/dashboard/live-events";
 import { RecentRunsTable } from "@/components/dashboard/recent-runs-table";
+import { ScheduledRunsTable } from "@/components/dashboard/scheduled-runs-table";
 import { TopNav } from "@/components/dashboard/top-nav";
 import { ControlPlanePanel } from "@/components/dashboard/control-plane-panel";
-import { getMetrics, listRecentEvents, listRuns } from "@/lib/dashboard-service";
+import { getMetrics, listRecentEvents, listRuns, listScheduledRuns } from "@/lib/dashboard-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [metrics, runs, events] = await Promise.all([
+  const [metrics, runs, events, scheduledRuns] = await Promise.all([
     getMetrics(),
     listRuns(),
-    listRecentEvents(5)
+    listRecentEvents(5),
+    listScheduledRuns(20)
   ]);
 
   return (
@@ -24,6 +26,7 @@ export default async function DashboardPage() {
         </section>
         <ControlPlanePanel />
         <HealthCards metrics={metrics} />
+        <ScheduledRunsTable runs={scheduledRuns} />
         <RecentRunsTable runs={runs} />
         <LiveEvents events={events} />
       </div>

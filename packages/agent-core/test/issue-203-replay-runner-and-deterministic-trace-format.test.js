@@ -11,7 +11,7 @@ const {
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -58,7 +58,7 @@ test("ISSUE-203: replay reconstructs persisted execution without external side e
       workspaceId: "agent",
       workflowId: "wf-203"
     },
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     actorScope: {
       tenantId: "tenant-a",
       workspaceId: "agent"
@@ -90,7 +90,7 @@ test("ISSUE-203: replay drift reports deterministic step-level diffs", () => {
     workspace_id: "agent",
     workflow_id: "wf-203",
     request: {
-      request_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      request_id: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
       objective_prompt: "Run replay-safe planner loop",
       occurred_at: "2026-02-17T00:00:00.000Z"
     },
@@ -167,7 +167,7 @@ test("ISSUE-203: replay trace access is denied across tenant boundaries without 
           workspaceId: "agent",
           workflowId: "wf-203-isolation"
         },
-        requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
         actorScope: {
           tenantId: "tenant-b",
           workspaceId: "agent"

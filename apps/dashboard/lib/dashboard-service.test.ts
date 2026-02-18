@@ -56,11 +56,12 @@ function createStoreFixture(input?: {
   agents?: Agent[];
   runs?: Run[];
   runEvents?: RunEvent[];
+  queueJobs?: WorkflowQueueJob[];
 }): ObservabilityStore {
   const agents = input?.agents ?? [makeAgent()];
   const runs = input?.runs ?? [makeRun()];
   const runEvents = input?.runEvents ?? [makeEvent()];
-  const queueJobs: WorkflowQueueJob[] = [];
+  const queueJobs: WorkflowQueueJob[] = input?.queueJobs ?? [];
 
   function toQueueJob(input: WorkflowQueueJobCreateInput): WorkflowQueueJob {
     const now = new Date().toISOString();
@@ -129,6 +130,19 @@ function createStoreFixture(input?: {
       queueJobs.push(created);
       return created;
     },
+    async listWorkflowJobs(filter) {
+      return queueJobs
+        .filter((job) => (filter?.statuses?.length ? filter.statuses.includes(job.status) : true))
+        .filter((job) =>
+          filter?.availableAfter ? new Date(job.availableAt).getTime() >= new Date(filter.availableAfter).getTime() : true
+        )
+        .filter((job) =>
+          filter?.availableBefore ? new Date(job.availableAt).getTime() <= new Date(filter.availableBefore).getTime() : true
+        )
+        .filter((job) => (filter?.tenantId ? job.tenantId === filter.tenantId : true))
+        .filter((job) => (filter?.workspaceId ? job.workspaceId === filter.workspaceId : true))
+        .slice(0, filter?.limit ?? 100);
+    },
     async claimWorkflowJobs() {
       return [];
     },
@@ -140,6 +154,37 @@ function createStoreFixture(input?: {
     },
     async getWorkflowJob(jobId: string) {
       return queueJobs.find((job) => job.id === jobId);
+    },
+    async upsertUser(input) {
+      return {
+        id: input.id,
+        email: input.email,
+        name: input.name,
+        image: input.image,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    },
+    async upsertConnection(input) {
+      return {
+        id: "conn-1",
+        userId: input.userId,
+        providerId: input.providerId,
+        providerAccountId: input.providerAccountId,
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken,
+        expiresAt: input.expiresAt,
+        scope: input.scope,
+        tokenType: input.tokenType,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    },
+    async getConnection() {
+      return undefined;
+    },
+    async deleteConnection() {
+      return;
     }
   };
 }
@@ -202,4 +247,101 @@ test("dispatchObjectiveRun creates run with scoped progress events", async () =>
   assert.equal(created.events[0].tenantId, "tenant-a");
   assert.equal(created.job.status, "queued");
   assert.equal(created.job.tenantId, "tenant-a");
+});
+
+test("createAgentAndRun creates agent and optionally starts run", async () => {
+  const store = createStoreFixture({ agents: [] });
+  const service = createDashboardService(store);
+
+  // Case 1: Just create agent
+  const result1 = await service.createAgentAndRun({
+    id: "agent-1",
+    name: "Agent 1",
+    owner: "owner@example.com",
+    env: "prod",
+    version: "1.0.0"
+  });
+  assert.equal(result1.agent.id, "agent-1");
+  assert.equal((result1 as any).run, undefined);
+
+  // Case 2: Create agent AND run
+  const result2 = await service.createAgentAndRun({
+    id: "agent-2",
+    name: "Agent 2",
+    owner: "owner@example.com",
+    env: "prod",
+    version: "1.0.0",
+    objectivePrompt: "Do something",
+    tenantId: "tenant-2",
+    workspaceId: "workspace-2"
+  });
+  assert.equal(result2.agent.id, "agent-2");
+  assert.equal((result2 as any).run.agentId, "agent-2");
+  assert.equal((result2 as any).run.status, "queued");
+  assert.equal((result2 as any).events[0].tenantId, "tenant-2");
+});
+
+test("listScheduledRuns returns one-off and cron upcoming jobs", async () => {
+  const now = Date.now();
+  const queueJobs: WorkflowQueueJob[] = [
+    {
+      id: "job-future-one-off",
+      runId: "run-one-off",
+      agentId: "agent-a",
+      tenantId: "tenant-a",
+      workspaceId: "workspace-a",
+      workflowId: "wf-one-off",
+      requestId: "req-one-off",
+      threadId: "thread-one-off",
+      objectivePrompt: "Send monthly invoice",
+      status: "queued",
+      attemptCount: 0,
+      maxAttempts: 3,
+      availableAt: new Date(now + 60_000).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString()
+    },
+    {
+      id: "job-future-cron",
+      runId: "run-cron",
+      agentId: "agent-a",
+      tenantId: "tenant-a",
+      workspaceId: "workspace-a",
+      workflowId: "wf-cron",
+      requestId: "req-cron",
+      threadId: "thread-cron",
+      objectivePrompt: "Daily triage",
+      status: "queued",
+      attemptCount: 0,
+      maxAttempts: 3,
+      availableAt: new Date(now + 120_000).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString()
+    }
+  ];
+  const runEvents: RunEvent[] = [
+    makeEvent({
+      runId: "run-one-off",
+      message: "Run queued by planner schedule tool",
+      payload: { available_at: queueJobs[0].availableAt, cron: null }
+    }),
+    makeEvent({
+      id: "018f3f10-64df-7c8a-a7dd-53f4f2f6ff1b",
+      runId: "run-cron",
+      message: "Run queued by planner schedule tool",
+      payload: { available_at: queueJobs[1].availableAt, cron: "0 9 * * 1-5" }
+    })
+  ];
+  const store = createStoreFixture({ queueJobs, runEvents });
+  const service = createDashboardService(store);
+
+  const scheduled = await service.listScheduledRuns(20, {
+    tenantId: "tenant-a",
+    workspaceId: "workspace-a"
+  });
+
+  assert.equal(scheduled.length, 2);
+  assert.equal(scheduled[0].scheduleType, "one_off");
+  assert.equal(scheduled[1].scheduleType, "cron");
+  assert.equal(scheduled[1].cronExpression, "0 9 * * 1-5");
 });

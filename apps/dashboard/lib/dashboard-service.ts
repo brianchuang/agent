@@ -5,6 +5,7 @@ import {
   Run,
   RunEvent,
   RunsFilter,
+  WorkflowQueueJob,
   getObservabilityStore
 } from "@agent/observability";
 import { uuidv7 } from "uuidv7";
@@ -28,13 +29,29 @@ export type DashboardMetricsResponse = DashboardMetrics & {
   tenantSloSummaries: TenantSloSummary[];
 };
 
+export type ScheduledRun = {
+  jobId: string;
+  runId: string;
+  agentId: string;
+  workflowId: string;
+  tenantId: string;
+  workspaceId: string;
+  objectivePrompt: string;
+  availableAt: string;
+  scheduleType: "one_off" | "cron";
+  cronExpression?: string;
+  source: "planner_schedule_tool" | "control_plane";
+};
+
 export type CreateAgentInput = {
-  id: string;
   name: string;
-  owner: string;
-  env: "prod" | "staging";
-  version: string;
+  id?: string;
+  owner?: string;
+  env?: "prod" | "staging";
+  version?: string;
   status?: Agent["status"];
+  systemPrompt?: string;
+  enabledTools?: string[];
 };
 
 export type DispatchObjectiveInput = {
@@ -42,6 +59,13 @@ export type DispatchObjectiveInput = {
   objectivePrompt: string;
   tenantId: string;
   workspaceId: string;
+  threadId?: string;
+};
+
+export type CreateAgentAndRunInput = CreateAgentInput & {
+  objectivePrompt?: string;
+  tenantId?: string;
+  workspaceId?: string;
   threadId?: string;
 };
 
@@ -120,6 +144,31 @@ export function createDashboardService(store: ObservabilityStore) {
     };
   }
 
+  async function inferScheduleMetadata(
+    job: WorkflowQueueJob
+  ): Promise<Pick<ScheduledRun, "scheduleType" | "cronExpression" | "source">> {
+    const events = await store.listRunEvents(job.runId);
+    const schedulingEvent = events.find((event) => event.message === "Run queued by planner schedule tool");
+    if (!schedulingEvent) {
+      return {
+        scheduleType: "one_off",
+        source: "control_plane"
+      };
+    }
+    const cronValue = schedulingEvent.payload?.cron;
+    if (typeof cronValue === "string" && cronValue.length > 0) {
+      return {
+        scheduleType: "cron",
+        cronExpression: cronValue,
+        source: "planner_schedule_tool"
+      };
+    }
+    return {
+      scheduleType: "one_off",
+      source: "planner_schedule_tool"
+    };
+  }
+
   return {
     async listAgents(scope?: TenantWorkspaceScope) {
       assertScope(scope);
@@ -152,21 +201,25 @@ export function createDashboardService(store: ObservabilityStore) {
     },
 
     async createAgent(input: CreateAgentInput) {
-      assertNonEmpty(input.id, "id");
       assertNonEmpty(input.name, "name");
-      assertNonEmpty(input.owner, "owner");
-      assertNonEmpty(input.version, "version");
+      const id = input.id || uuidv7();
+      const owner = input.owner || "unknown"; // Or maybe get from auth context if available
+      const env = input.env || "prod";
+      const version = input.version || "1.0.0";
+      
       const now = new Date().toISOString();
       const agent: Agent = {
-        id: input.id,
+        id,
         name: input.name,
-        owner: input.owner,
-        env: input.env,
-        version: input.version,
+        owner,
+        env,
+        version,
         status: input.status ?? "healthy",
         lastHeartbeatAt: now,
         errorRate: 0,
-        avgLatencyMs: 0
+        avgLatencyMs: 0,
+        systemPrompt: input.systemPrompt,
+        enabledTools: input.enabledTools
       };
       await store.upsertAgent(agent);
       return agent;
@@ -253,10 +306,57 @@ export function createDashboardService(store: ObservabilityStore) {
       return { run, events, job };
     },
 
+    async createAgentAndRun(input: CreateAgentAndRunInput) {
+      const agent = await this.createAgent(input);
+      if (input.objectivePrompt && input.tenantId && input.workspaceId) {
+        const runResult = await this.dispatchObjectiveRun({
+          agentId: agent.id,
+          objectivePrompt: input.objectivePrompt,
+          tenantId: input.tenantId,
+          workspaceId: input.workspaceId,
+          threadId: input.threadId || uuidv7()
+        });
+        return { agent, ...runResult };
+      }
+      return { agent };
+    },
+
     async listRunEvents(runId: string, scope?: TenantWorkspaceScope) {
       assertScope(scope);
       const events = await store.listRunEvents(runId);
       return events.filter((event) => scopeMatchesEvent(event, scope));
+    },
+
+    async listScheduledRuns(limit = 20, scope?: TenantWorkspaceScope): Promise<ScheduledRun[]> {
+      assertScope(scope);
+      const jobs = await store.listWorkflowJobs({
+        statuses: ["queued"],
+        availableAfter: new Date().toISOString(),
+        tenantId: scope?.tenantId,
+        workspaceId: scope?.workspaceId,
+        limit
+      });
+
+      const scheduled = await Promise.all(
+        jobs.map(async (job) => {
+          const meta = await inferScheduleMetadata(job);
+          return {
+            jobId: job.id,
+            runId: job.runId,
+            agentId: job.agentId,
+            workflowId: job.workflowId,
+            tenantId: job.tenantId,
+            workspaceId: job.workspaceId,
+            objectivePrompt: job.objectivePrompt,
+            availableAt: job.availableAt,
+            scheduleType: meta.scheduleType,
+            cronExpression: meta.cronExpression,
+            source: meta.source
+          } satisfies ScheduledRun;
+        })
+      );
+
+      return scheduled;
     },
 
     async listRecentEvents(limit = 10, scope?: TenantWorkspaceScope): Promise<RunEvent[]> {
@@ -365,7 +465,9 @@ export const listRuns = dashboardService.listRuns.bind(dashboardService);
 export const getRun = dashboardService.getRun.bind(dashboardService);
 export const dispatchObjectiveRun = dashboardService.dispatchObjectiveRun.bind(dashboardService);
 export const listRunEvents = dashboardService.listRunEvents.bind(dashboardService);
+export const listScheduledRuns = dashboardService.listScheduledRuns.bind(dashboardService);
 export const listRecentEvents = dashboardService.listRecentEvents.bind(dashboardService);
 export const listIncidents = dashboardService.listIncidents.bind(dashboardService);
 export const listAgentRuns = dashboardService.listAgentRuns.bind(dashboardService);
 export const getMetrics = dashboardService.getMetrics.bind(dashboardService);
+export const createAgentAndRun = dashboardService.createAgentAndRun.bind(dashboardService);

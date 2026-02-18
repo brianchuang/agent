@@ -7,18 +7,20 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "next lint",
-    "test": "node --import tsx --test lib/*.test.ts",
-    "worker": "node --import tsx scripts/queue-worker.ts",
-    "worker:once": "WORKER_RUN_ONCE=1 node --import tsx scripts/queue-worker.ts"
+    "test": "node --import tsx --test lib/*.test.ts"
   },
   "dependencies": {
+    "@agent/core": "file:../../packages/agent-core",
     "@agent/observability": "file:../../packages/agent-observability",
+    "groq-sdk": "^0.37.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.469.0",
     "next": "15.1.6",
+    "next-auth": "^5.0.0-beta.30",
     "react": "19.0.0",
     "react-dom": "19.0.0",
+    "react-icons": "^5.5.0",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {

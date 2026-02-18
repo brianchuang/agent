@@ -28,7 +28,7 @@ test("ISSUE-001: runtime rejects envelope without schemaVersion", async () => {
   await assert.rejects(
     async () =>
       runtime.run({
-        eventId: "11111111-1111-4111-8111-111111111111",
+        eventId: "11111111-1111-7111-8111-111111111111",
         objectiveId: "interview-management",
         type: "candidate.register",
         threadId: "thread-1",
@@ -45,7 +45,7 @@ test("ISSUE-001: runtime rejects unsupported envelope schema versions", async ()
   await assert.rejects(
     async () =>
       runtime.run({
-        eventId: "11111111-1111-4111-8111-111111111111",
+        eventId: "11111111-1111-7111-8111-111111111111",
         schemaVersion: "v2",
         objectiveId: "interview-management",
         type: "candidate.register",
@@ -61,7 +61,7 @@ test("ISSUE-001: runtime accepts valid v1 envelope", async () => {
   const runtime = buildRuntime();
 
   const result = await runtime.run({
-    eventId: "11111111-1111-4111-8111-111111111111",
+    eventId: "11111111-1111-7111-8111-111111111111",
     schemaVersion: "v1",
     objectiveId: "interview-management",
     type: "candidate.register",

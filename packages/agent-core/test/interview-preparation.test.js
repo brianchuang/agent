@@ -10,7 +10,7 @@ const {
 
 function request(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-interview",
     workspaceId: "agent-interview",
@@ -41,7 +41,7 @@ test("Scenario: Help me prepare for interviews (Mocked Planner)", async () => {
           const runtime = new AgentRuntime("agent-interview", null, undefined, persistence);
 
           const req1 = request({ 
-            requestId: "11111111-1111-4111-8111-111111111111",
+            requestId: "11111111-1111-7111-8111-111111111111",
             workflowId: "wf-interview-001"
           });
 
@@ -63,7 +63,7 @@ test("Scenario: Help me prepare for interviews (Mocked Planner)", async () => {
           );
           // 2. User answers first question -> Signal
           await runtime.resumeWithSignal({
-            signalId: "22222222-2222-4222-8222-222222222222",
+            signalId: "22222222-2222-7222-8222-222222222222",
             schemaVersion: "v1",
             tenantId: "tenant-interview",
             workspaceId: "agent-interview",
@@ -75,7 +75,7 @@ test("Scenario: Help me prepare for interviews (Mocked Planner)", async () => {
 
           // 3. Planner responds to answer and asks follow-up
           await runtime.runPlannerLoop(
-            request({ requestId: "33333333-3333-4333-8333-333333333333" }),
+            request({ requestId: "33333333-3333-7333-8333-333333333333" }),
             {
               planner: ({ prior_step_summaries }) => {
                 // We expect prior steps: [ask_user(waiting)]
@@ -92,7 +92,7 @@ test("Scenario: Help me prepare for interviews (Mocked Planner)", async () => {
 
           // 4. User answers second question -> Signal
           await runtime.resumeWithSignal({
-            signalId: "44444444-4444-4444-8444-444444444444",
+            signalId: "44444444-4444-7444-8444-444444444444",
             schemaVersion: "v1",
             tenantId: "tenant-interview",
             workspaceId: "agent-interview",
@@ -104,7 +104,7 @@ test("Scenario: Help me prepare for interviews (Mocked Planner)", async () => {
 
           // 5. Planner evaluates and completes
           const result = await runtime.runPlannerLoop(
-            request({ requestId: "55555555-5555-4555-8555-555555555555" }),
+            request({ requestId: "55555555-5555-7555-8555-555555555555" }),
             {
               planner: ({ prior_step_summaries }) => {
                  if (prior_step_summaries.length >= 4) {

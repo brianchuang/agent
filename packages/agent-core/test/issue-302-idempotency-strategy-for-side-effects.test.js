@@ -15,7 +15,7 @@ function toolInput(overrides = {}) {
     tenantId: "tenant-a",
     workspaceId: "agent",
     workflowId: "wf-302",
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     stepNumber: 0,
     toolName: "message.send",
     args: { to: "user@example.com", body: "hello" },

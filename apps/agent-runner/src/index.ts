@@ -1,9 +1,9 @@
 import { getObservabilityStore } from "@agent/observability";
-import { createInlineExecutionAdapter } from "../lib/queue-executor";
-import { createQueueRunner } from "../lib/queue-runner";
+import { createInlineExecutionAdapter } from "./executor";
+import { createQueueRunner } from "./runner";
 
 async function run() {
-  const workerId = process.env.WORKER_ID ?? "dashboard-worker";
+  const workerId = process.env.WORKER_ID ?? "agent-runner-worker";
   const limit = Number.parseInt(process.env.WORKER_BATCH_SIZE ?? "10", 10);
   const leaseMs = Number.parseInt(process.env.WORKER_LEASE_MS ?? "30000", 10);
   const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "1000", 10);
@@ -12,11 +12,13 @@ async function run() {
   const workspaceId = process.env.WORKER_WORKSPACE_ID;
 
   const store = getObservabilityStore();
-  const executor = createInlineExecutionAdapter();
+  const executor = createInlineExecutionAdapter({ store });
   const runner = createQueueRunner({
     store,
     execute: (job) => executor.execute(job)
   });
+
+  console.log(`[Agent Runner] Starting worker ${workerId}...`);
 
   do {
     const result = await runner.runOnce({

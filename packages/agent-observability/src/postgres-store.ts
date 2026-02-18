@@ -14,7 +14,12 @@ import {
   RunStatus,
   WorkflowQueueJob,
   WorkflowQueueJobCreateInput,
-  WorkflowQueueJobStatus
+  WorkflowQueueJobsFilter,
+  WorkflowQueueJobStatus,
+  UpsertUserInput,
+  UpsertConnectionInput,
+  Connection,
+  User
 } from "./types";
 
 type AgentRow = {
@@ -27,6 +32,8 @@ type AgentRow = {
   last_heartbeat_at: Date;
   error_rate: string;
   avg_latency_ms: number;
+  system_prompt: string | null;
+  enabled_tools: string[];
 };
 
 type RunRow = {
@@ -88,7 +95,9 @@ function mapAgent(row: AgentRow): Agent {
     status: row.status,
     lastHeartbeatAt: row.last_heartbeat_at.toISOString(),
     errorRate: Number(row.error_rate),
-    avgLatencyMs: row.avg_latency_ms
+    avgLatencyMs: row.avg_latency_ms,
+    systemPrompt: row.system_prompt ?? undefined,
+    enabledTools: row.enabled_tools
   };
 }
 
@@ -179,7 +188,7 @@ export class PostgresObservabilityStore implements ObservabilityStore {
 
   async listAgents(): Promise<Agent[]> {
     const result = await this.pool.query<AgentRow>(
-      `SELECT id, name, owner, env, version, status, last_heartbeat_at, error_rate, avg_latency_ms
+      `SELECT id, name, owner, env, version, status, last_heartbeat_at, error_rate, avg_latency_ms, system_prompt, enabled_tools
          FROM agents
          ORDER BY last_heartbeat_at DESC`
     );
@@ -189,7 +198,7 @@ export class PostgresObservabilityStore implements ObservabilityStore {
 
   async getAgent(id: string): Promise<Agent | undefined> {
     const result = await this.pool.query<AgentRow>(
-      `SELECT id, name, owner, env, version, status, last_heartbeat_at, error_rate, avg_latency_ms
+      `SELECT id, name, owner, env, version, status, last_heartbeat_at, error_rate, avg_latency_ms, system_prompt, enabled_tools
          FROM agents
          WHERE id = $1`,
       [id]
@@ -200,8 +209,8 @@ export class PostgresObservabilityStore implements ObservabilityStore {
 
   async upsertAgent(agent: Agent): Promise<void> {
     await this.pool.query(
-      `INSERT INTO agents (id, name, owner, env, version, status, last_heartbeat_at, error_rate, avg_latency_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8, $9)
+      `INSERT INTO agents (id, name, owner, env, version, status, last_heartbeat_at, error_rate, avg_latency_ms, system_prompt, enabled_tools)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8, $9, $10, $11::jsonb)
        ON CONFLICT (id)
        DO UPDATE SET
          name = EXCLUDED.name,
@@ -212,6 +221,8 @@ export class PostgresObservabilityStore implements ObservabilityStore {
          last_heartbeat_at = EXCLUDED.last_heartbeat_at,
          error_rate = EXCLUDED.error_rate,
          avg_latency_ms = EXCLUDED.avg_latency_ms,
+         system_prompt = EXCLUDED.system_prompt,
+         enabled_tools = EXCLUDED.enabled_tools,
          updated_at = NOW()`,
       [
         agent.id,
@@ -222,7 +233,9 @@ export class PostgresObservabilityStore implements ObservabilityStore {
         agent.status,
         agent.lastHeartbeatAt,
         agent.errorRate,
-        agent.avgLatencyMs
+        agent.avgLatencyMs,
+        agent.systemPrompt ?? null,
+        JSON.stringify(agent.enabledTools ?? [])
       ]
     );
   }
@@ -413,6 +426,54 @@ export class PostgresObservabilityStore implements ObservabilityStore {
     return mapWorkflowQueueJob(result.rows[0]);
   }
 
+  async listWorkflowJobs(filter?: WorkflowQueueJobsFilter): Promise<WorkflowQueueJob[]> {
+    const clauses: string[] = [];
+    const values: Array<string | number | string[]> = [];
+
+    if (filter?.statuses && filter.statuses.length > 0) {
+      values.push(filter.statuses);
+      clauses.push(`status = ANY($${values.length}::text[])`);
+    }
+
+    if (filter?.availableAfter) {
+      values.push(filter.availableAfter);
+      clauses.push(`available_at >= $${values.length}::timestamptz`);
+    }
+
+    if (filter?.availableBefore) {
+      values.push(filter.availableBefore);
+      clauses.push(`available_at <= $${values.length}::timestamptz`);
+    }
+
+    if (filter?.tenantId) {
+      values.push(filter.tenantId);
+      clauses.push(`tenant_id = $${values.length}`);
+    }
+
+    if (filter?.workspaceId) {
+      values.push(filter.workspaceId);
+      clauses.push(`workspace_id = $${values.length}`);
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = Number.isInteger(filter?.limit) && (filter?.limit as number) > 0 ? (filter?.limit as number) : 100;
+    values.push(limit);
+
+    const result = await this.pool.query<WorkflowQueueJobRow>(
+      `SELECT
+          id, run_id, agent_id, tenant_id, workspace_id, workflow_id, request_id, thread_id,
+          objective_prompt, status, attempt_count, max_attempts, available_at, lease_token,
+          lease_expires_at, last_error, created_at, updated_at
+         FROM workflow_queue_jobs
+         ${where}
+         ORDER BY available_at ASC, created_at ASC
+         LIMIT $${values.length}`,
+      values
+    );
+
+    return result.rows.map(mapWorkflowQueueJob);
+  }
+
   async claimWorkflowJobs(input: ClaimWorkflowJobsInput): Promise<WorkflowQueueJob[]> {
     const now = input.now ?? new Date().toISOString();
     const client = await this.pool.connect();
@@ -516,5 +577,111 @@ export class PostgresObservabilityStore implements ObservabilityStore {
       [jobId]
     );
     return result.rowCount ? mapWorkflowQueueJob(result.rows[0]) : undefined;
+  }
+
+  async upsertUser(input: UpsertUserInput): Promise<User> {
+    // Check for existing user by email to avoid unique constraint violation
+    const existing = await this.pool.query('SELECT id FROM users WHERE email = $1', [input.email]);
+    const idToUse = existing.rowCount && existing.rowCount > 0 ? existing.rows[0].id : input.id;
+
+    const result = await this.pool.query(
+      `INSERT INTO users (id, email, name, image, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (id)
+       DO UPDATE SET
+         email = EXCLUDED.email,
+         name = EXCLUDED.name,
+         image = EXCLUDED.image,
+         updated_at = NOW()
+       RETURNING id, email, name, image, created_at, updated_at`,
+      [idToUse, input.email, input.name ?? null, input.image ?? null]
+    );
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name ?? undefined,
+      image: row.image ?? undefined,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString()
+    };
+  }
+
+  async upsertConnection(input: UpsertConnectionInput): Promise<Connection> {
+    const result = await this.pool.query(
+      `INSERT INTO connections (
+         user_id, provider_id, provider_account_id, access_token, refresh_token,
+         expires_at, scope, token_type, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::bigint, $7, $8, NOW())
+       ON CONFLICT (user_id, provider_id)
+       DO UPDATE SET
+         provider_account_id = EXCLUDED.provider_account_id,
+         access_token = EXCLUDED.access_token,
+         refresh_token = EXCLUDED.refresh_token,
+         expires_at = EXCLUDED.expires_at,
+         scope = EXCLUDED.scope,
+         token_type = EXCLUDED.token_type,
+         updated_at = NOW()
+       RETURNING id, user_id, provider_id, provider_account_id, access_token, refresh_token, expires_at, scope, token_type, created_at, updated_at`,
+      [
+        input.userId,
+        input.providerId,
+        input.providerAccountId,
+        input.accessToken ?? null,
+        input.refreshToken ?? null,
+        input.expiresAt ?? null,
+        input.scope ?? null,
+        input.tokenType ?? null
+      ]
+    );
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      userId: row.user_id,
+      providerId: row.provider_id,
+      providerAccountId: row.provider_account_id,
+      accessToken: row.access_token ?? undefined,
+      refreshToken: row.refresh_token ?? undefined,
+      expiresAt: row.expires_at ? Number(row.expires_at) : undefined,
+      scope: row.scope ?? undefined,
+      tokenType: row.token_type ?? undefined,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString()
+    };
+  }
+
+  async getConnection(userId: string, providerId: string): Promise<Connection | undefined> {
+    const result = await this.pool.query(
+      `SELECT id, user_id, provider_id, provider_account_id, access_token, refresh_token, expires_at, scope, token_type, created_at, updated_at
+       FROM connections
+       WHERE user_id = $1 AND provider_id = $2`,
+      [userId, providerId]
+    );
+
+    if (result.rowCount === 0) return undefined;
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      userId: row.user_id,
+      providerId: row.provider_id,
+      providerAccountId: row.provider_account_id,
+      accessToken: row.access_token ?? undefined,
+      refreshToken: row.refresh_token ?? undefined,
+      expiresAt: row.expires_at ? Number(row.expires_at) : undefined,
+      scope: row.scope ?? undefined,
+      tokenType: row.token_type ?? undefined,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString()
+    };
+  }
+
+  async deleteConnection(userId: string, providerId: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM connections
+       WHERE user_id = $1 AND provider_id = $2`,
+      [userId, providerId]
+    );
   }
 }

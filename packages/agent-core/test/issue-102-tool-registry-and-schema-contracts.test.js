@@ -7,7 +7,7 @@ const { ToolRegistry } = require("../dist/core/toolRegistry");
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",

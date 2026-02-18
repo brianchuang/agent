@@ -1,0 +1,24 @@
+{
+  "name": "agent-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --import tsx src/index.ts",
+    "start": "node --import tsx src/index.ts",
+    "worker:once": "WORKER_RUN_ONCE=1 node --import tsx src/index.ts",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@agent/core": "file:../../packages/agent-core",
+    "@agent/observability": "file:../../packages/agent-observability",
+    "@ai-sdk/openai": "^3.0.29",
+    "ai": "^6.0.89",
+    "tsx": "^4.21.0",
+    "uuidv7": "^0.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.3"
+  }
+}

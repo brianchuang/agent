@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Run, RunEvent, WorkflowQueueJob } from "@agent/observability";
-import { createQueueRunner } from "./queue-runner.ts";
+import { createQueueRunner } from "./runner";
 
 type MemoryStore = {
   queueJobs: WorkflowQueueJob[];

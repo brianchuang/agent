@@ -6,7 +6,7 @@ const { ValidationRuntimeError, SignalValidationError } = require("../dist/core/
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -145,7 +145,7 @@ test("ISSUE-101: pause/resume continues by workflow ID without re-running comple
   assert.equal(toolCalls, 1);
 
   const resumed = await runtime.resumeWithSignal({
-    signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    signalId: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -204,7 +204,7 @@ test("ISSUE-101: tenant/workspace checks are enforced on every resumed step", as
     })
   });
   await runtime.resumeWithSignal({
-    signalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    signalId: "cccccccc-cccc-7ccc-8ccc-cccccccccccc",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -219,7 +219,7 @@ test("ISSUE-101: tenant/workspace checks are enforced on every resumed step", as
   await runtime.runPlannerLoop(
         objectiveRequest({
           workflowId: "wf-tenant",
-          requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          requestId: "dddddddd-dddd-7ddd-8ddd-dddddddddddd",
           tenantId: "tenant-b"
         }),
         {

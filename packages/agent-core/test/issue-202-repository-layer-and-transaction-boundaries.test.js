@@ -7,7 +7,7 @@ const { InternalRuntimeError, SignalValidationError } = require("../dist/core/er
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -94,7 +94,7 @@ test("ISSUE-202: restart resumes from last committed checkpoint", async () => {
 
   const runtimeB = new AgentRuntime("agent", null, undefined, persistence);
   await runtimeB.resumeWithSignal({
-    signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    signalId: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -106,7 +106,7 @@ test("ISSUE-202: restart resumes from last committed checkpoint", async () => {
 
   const completed = await runtimeB.runPlannerLoop(
     objectiveRequest({
-      requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      requestId: "cccccccc-cccc-7ccc-8ccc-cccccccccccc",
       workflowId: "wf-202-resume"
     }),
     {
@@ -165,7 +165,7 @@ test("ISSUE-202: signal checkpoint is consumed exactly once", async () => {
   });
 
   const firstResume = await runtime.resumeWithSignal({
-    signalId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    signalId: "dddddddd-dddd-7ddd-8ddd-dddddddddddd",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -180,7 +180,7 @@ test("ISSUE-202: signal checkpoint is consumed exactly once", async () => {
   await assert.rejects(
     async () =>
       await runtime.resumeWithSignal({
-        signalId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        signalId: "eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee",
         schemaVersion: "v1",
         tenantId: "tenant-a",
         workspaceId: "agent",
@@ -202,6 +202,6 @@ test("ISSUE-202: signal checkpoint is consumed exactly once", async () => {
   });
 
   assert.equal(signals.length, 1);
-  assert.equal(signals[0].signalId, "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+  assert.equal(signals[0].signalId, "dddddddd-dddd-7ddd-8ddd-dddddddddddd");
   assert.equal(signals[0].signalStatus, "acknowledged");
 });

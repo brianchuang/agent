@@ -7,7 +7,7 @@ const { PolicyBlockedError } = require("../dist/core/errors");
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -84,7 +84,7 @@ test("ISSUE-401: rewrite outcomes deterministically alter planner intent before 
   const result = await runtime.runPlannerLoop(
     objectiveRequest({
       workflowId: "wf-401-rewrite",
-      requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      requestId: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"
     }),
     {
       planner: ({ prior_step_summaries }) => {
@@ -173,8 +173,8 @@ test("ISSUE-401: policy outcomes are deterministic for same inputs", async () =>
   };
 
   for (const [workflowId, requestId] of [
-    ["wf-401-det-a", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"],
-    ["wf-401-det-b", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"]
+    ["wf-401-det-a", "cccccccc-cccc-7ccc-8ccc-cccccccccccc"],
+    ["wf-401-det-b", "dddddddd-dddd-7ddd-8ddd-dddddddddddd"]
   ]) {
     await runtime.runPlannerLoop(
       objectiveRequest({
@@ -272,7 +272,7 @@ test("ISSUE-401: policy evaluation is isolated to active tenant policy pack", as
 
   await assert.rejects(
     async () =>
-      await runWithTenant("tenant-a", "wf-401-tenant-a", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+      await runWithTenant("tenant-a", "wf-401-tenant-a", "eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee"),
     (err) =>
       err instanceof PolicyBlockedError &&
       err.policyId === "POL-TENANT-A-BLOCK"
@@ -281,7 +281,7 @@ test("ISSUE-401: policy evaluation is isolated to active tenant policy pack", as
   const tenantBResult = await runWithTenant(
     "tenant-b",
     "wf-401-tenant-b",
-    "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    "ffffffff-ffff-7fff-8fff-ffffffffffff"
   );
 
   assert.equal(tenantBResult.status, "completed");

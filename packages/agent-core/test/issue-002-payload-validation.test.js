@@ -15,7 +15,7 @@ function buildRuntimeWithInterview() {
 
 function envelope(type, payload, threadId = "thread-1") {
   return {
-    eventId: "11111111-1111-4111-8111-111111111111",
+    eventId: "11111111-1111-7111-8111-111111111111",
     schemaVersion: "v1",
     objectiveId: "interview-management",
     type,
@@ -111,7 +111,7 @@ test("ISSUE-002: validation failures happen before any objective/memory side eff
   await assert.rejects(
     async () =>
       runtime.run({
-        eventId: "11111111-1111-4111-8111-111111111111",
+        eventId: "11111111-1111-7111-8111-111111111111",
         schemaVersion: "v1",
         objectiveId: "test-objective",
         type: "anything",

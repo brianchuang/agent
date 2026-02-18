@@ -11,7 +11,7 @@ const {
 
 function request(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -41,7 +41,7 @@ test("ISSUE-501: deterministic planner quality report is stable for identical su
           const persistence = new InMemoryAgentPersistence();
           const runtime = new AgentRuntime("agent", null, undefined, persistence);
           return await runtime.runPlannerLoop(
-            request({ workflowId: "wf-501-s1", requestId: "11111111-1111-4111-8111-111111111111" }),
+            request({ workflowId: "wf-501-s1", requestId: "11111111-1111-7111-8111-111111111111" }),
             {
               planner: () => ({ type: "complete", output: { done: true } })
             }
@@ -64,7 +64,7 @@ test("ISSUE-501: deterministic planner quality report is stable for identical su
           const runtime = new AgentRuntime("agent", null, undefined, persistence);
 
           await runtime.runPlannerLoop(
-            request({ workflowId: "wf-501-s2", requestId: "22222222-2222-4222-8222-222222222222" }),
+            request({ workflowId: "wf-501-s2", requestId: "22222222-2222-7222-8222-222222222222" }),
             {
               planner: ({ prior_step_summaries }) => {
                 if (prior_step_summaries.length === 0) {
@@ -76,7 +76,7 @@ test("ISSUE-501: deterministic planner quality report is stable for identical su
           );
 
           await runtime.resumeWithSignal({
-            signalId: "33333333-3333-4333-8333-333333333333",
+            signalId: "33333333-3333-7333-8333-333333333333",
             schemaVersion: "v1",
             tenantId: "tenant-a",
             workspaceId: "agent",
@@ -87,7 +87,7 @@ test("ISSUE-501: deterministic planner quality report is stable for identical su
           });
 
           const resumed = await runtime.runPlannerLoop(
-            request({ workflowId: "wf-501-s2", requestId: "44444444-4444-4444-8444-444444444444" }),
+            request({ workflowId: "wf-501-s2", requestId: "44444444-4444-7444-8444-444444444444" }),
             {
               planner: ({ prior_step_summaries }) => {
                 if (prior_step_summaries.length === 0) {
@@ -143,7 +143,7 @@ test("ISSUE-501: regression thresholds fail fast when planner quality degrades",
           const runtime = new AgentRuntime("agent", null, undefined, persistence);
 
           return await runtime.runPlannerLoop(
-            request({ workflowId: "wf-501-threshold", requestId: "55555555-5555-4555-8555-555555555555" }),
+            request({ workflowId: "wf-501-threshold", requestId: "55555555-5555-7555-8555-555555555555" }),
             {
               planner: ({ prior_step_summaries }) => {
                 if (prior_step_summaries.length === 0) {

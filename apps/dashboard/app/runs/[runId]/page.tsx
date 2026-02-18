@@ -6,6 +6,8 @@ import { RunTimeline } from "@/components/dashboard/run-timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getRun, listRunEvents } from "@/lib/dashboard-service";
 
+import { auth } from "@/lib/auth";
+
 type Params = {
   params: Promise<{ runId: string }>;
   searchParams: Promise<{ tenantId?: string; workspaceId?: string }>;
@@ -14,10 +16,13 @@ type Params = {
 export const dynamic = "force-dynamic";
 
 export default async function RunDetailPage({ params, searchParams }: Params) {
+  const session = await auth();
   const { runId } = await params;
   const scope = await searchParams;
-  const tenantId = scope.tenantId;
-  const workspaceId = scope.workspaceId;
+  
+  const tenantId = scope.tenantId ?? session?.user?.id;
+  const workspaceId = scope.workspaceId ?? (tenantId ? "personal" : undefined);
+  
   const run = await getRun(runId, { tenantId, workspaceId });
 
   if (!run) {

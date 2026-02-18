@@ -2,16 +2,18 @@
   "name": "@agent/core",
   "version": "0.1.0",
   "private": true,
-  "description": "MVP interview management agent with memory retrieval, promotion, and decay.",
+  "description": "MVP agent framework with memory retrieval, promotion, and decay.",
   "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/demo.js",
-    "dev": "ts-node src/demo.ts",
     "test": "npm run build && node --test test/*.test.js"
   },
   "dependencies": {
     "@agent/observability": "file:../agent-observability",
+    "googleapis": "^171.4.0",
+    "groq-sdk": "^0.37.0",
     "uuidv7": "^1.0.2"
   },
   "devDependencies": {

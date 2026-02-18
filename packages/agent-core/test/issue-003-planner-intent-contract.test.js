@@ -13,7 +13,7 @@ const {
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "22222222-2222-4222-8222-222222222222",
+    requestId: "22222222-2222-7222-8222-222222222222",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -104,7 +104,7 @@ test("ISSUE-003: runtime returns consistent typed errors for failure classes", a
   await assert.rejects(
     async () =>
       runtime.runPlannerIntentStep(
-        objectiveRequest({ workflowId: "wf-2", requestId: "33333333-3333-4333-8333-333333333333" }),
+        objectiveRequest({ workflowId: "wf-2", requestId: "33333333-3333-7333-8333-333333333333" }),
         {
           type: "tool_call",
           toolName: "calendar.create_event",
@@ -122,7 +122,7 @@ test("ISSUE-003: runtime returns consistent typed errors for failure classes", a
   await assert.rejects(
     async () =>
       runtime.runPlannerIntentStep(
-        objectiveRequest({ workflowId: "wf-3", requestId: "44444444-4444-4444-8444-444444444444" }),
+        objectiveRequest({ workflowId: "wf-3", requestId: "44444444-4444-7444-8444-444444444444" }),
         {
           type: "tool_call",
           toolName: "calendar.create_event",
@@ -140,7 +140,7 @@ test("ISSUE-003: runtime returns consistent typed errors for failure classes", a
   await assert.rejects(
     async () =>
       runtime.runPlannerIntentStep(
-        objectiveRequest({ workflowId: "wf-4", requestId: "55555555-5555-4555-8555-555555555555" }),
+        objectiveRequest({ workflowId: "wf-4", requestId: "55555555-5555-7555-8555-555555555555" }),
         {
           type: "tool_call",
           toolName: "calendar.create_event",
@@ -169,7 +169,7 @@ test("ISSUE-003: signal contracts are validated and resume tenant-scoped workflo
   assert.equal(waitResult.step.status, "waiting_signal");
 
   const resumed = await runtime.resumeWithSignal({
-    signalId: "66666666-6666-4666-8666-666666666666",
+    signalId: "66666666-6666-7666-8666-666666666666",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -185,7 +185,7 @@ test("ISSUE-003: signal contracts are validated and resume tenant-scoped workflo
   await assert.rejects(
     async () =>
   await runtime.resumeWithSignal({
-        signalId: "77777777-7777-4777-8777-777777777777",
+        signalId: "77777777-7777-7777-8777-777777777777",
         schemaVersion: "v1",
         tenantId: "tenant-a",
         workspaceId: "agent",
@@ -203,7 +203,7 @@ test("ISSUE-003: signal contracts are validated and resume tenant-scoped workflo
   await assert.rejects(
     async () =>
   await runtime.resumeWithSignal({
-        signalId: "88888888-8888-4888-8888-888888888888",
+        signalId: "88888888-8888-7888-8888-888888888888",
         schemaVersion: "v1",
         tenantId: "tenant-b",
         workspaceId: "agent",

@@ -4,6 +4,7 @@ const https = require("https");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { uuidv7 } = require("uuidv7");
 
 const { AgentRuntime } = require("../dist/core/agentRuntime");
 const { InMemoryAgentPersistence } = require("../dist/core/persistence/repositories");
@@ -124,7 +125,7 @@ test("Integration: LLM API Connectivity", { skip: !process.env.GROK_API_KEY }, a
     
     const result = await runtime.runPlannerLoop(
       {
-        requestId: crypto.randomUUID(),
+        requestId: uuidv7(),
         schemaVersion: "v1",
         tenantId: "tenant-int",
         workspaceId: "agent-interview",

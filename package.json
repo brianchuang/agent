@@ -11,6 +11,8 @@
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "worker": "node --env-file=.env.local --import tsx apps/agent-runner/src/index.ts",
+    "worker:once": "WORKER_RUN_ONCE=1 node --env-file=.env.local --import tsx apps/agent-runner/src/index.ts",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate --workspace @agent/observability",

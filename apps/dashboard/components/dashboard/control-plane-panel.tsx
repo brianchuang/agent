@@ -13,7 +13,7 @@ type FormState = {
 export function ControlPlanePanel() {
   const router = useRouter();
   const [createState, setCreateState] = useState<FormState>({});
-  const [dispatchState, setDispatchState] = useState<FormState>({});
+
 
   return (
     <section className="grid gap-4 lg:grid-cols-2">
@@ -28,36 +28,63 @@ export function ControlPlanePanel() {
               event.preventDefault();
               setCreateState({});
               const form = new FormData(event.currentTarget);
+
               const payload = {
-                id: String(form.get("id") ?? ""),
                 name: String(form.get("name") ?? ""),
-                owner: String(form.get("owner") ?? ""),
-                env: String(form.get("env") ?? ""),
-                version: String(form.get("version") ?? "")
+                systemPrompt: String(form.get("systemPrompt") ?? ""),
+                enabledTools: String(form.get("enabledTools") ?? "").split(",").map(s => s.trim()).filter(Boolean),
+                objectivePrompt: String(form.get("objectivePrompt") ?? "")
               };
               const response = await fetch("/api/agents", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(payload)
               });
-              const body = (await response.json()) as { error?: string; data?: { id: string } };
+              const body = (await response.json()) as { 
+                error?: string; 
+                data?: { 
+                  agent: { id: string };
+                  run?: { id: string };
+                  events?: { tenantId: string; workspaceId: string }[];
+                } 
+              };
               if (!response.ok) {
                 setCreateState({ error: body.error ?? "Failed to create agent" });
                 return;
               }
-              setCreateState({ success: `Created ${body.data?.id ?? payload.id}` });
+              setCreateState({ success: `Created ${body.data?.agent.id}` });
+              if (body.data?.run?.id) {
+                 const runId = body.data.run.id;
+                 router.push(`/runs/${encodeURIComponent(runId)}`);
+              }
               event.currentTarget.reset();
               router.refresh();
             }}
           >
-            <input name="id" placeholder="agent id" className="w-full rounded border px-3 py-2 text-sm" />
-            <input name="name" placeholder="display name" className="w-full rounded border px-3 py-2 text-sm" />
-            <input name="owner" placeholder="owner email" className="w-full rounded border px-3 py-2 text-sm" />
-            <select name="env" className="w-full rounded border px-3 py-2 text-sm" defaultValue="staging">
-              <option value="staging">staging</option>
-              <option value="prod">prod</option>
-            </select>
-            <input name="version" placeholder="version" className="w-full rounded border px-3 py-2 text-sm" defaultValue="1.0.0" />
+            <input name="name" placeholder="Agent Name (e.g. Personal Assistant)" className="w-full rounded border px-3 py-2 text-sm" />
+            <div className="border-t pt-2 mt-2">
+              <p className="text-sm font-medium mb-1">Agent Configuration</p>
+              <textarea
+                name="systemPrompt"
+                placeholder="System Prompt (e.g. You are a helpful assistant...)"
+                className="h-24 w-full rounded border px-3 py-2 text-sm mb-2"
+                defaultValue="You are a helpful agent. You have access to a calendar tool 'calendar_list_events'. If the user asks about schedule/calendar, use it. Output ONLY valid JSON."
+              />
+              <input 
+                name="enabledTools" 
+                placeholder="Enabled Tools (comma-separated, e.g. calendar_list_events, gmail_list_threads)" 
+                className="w-full rounded border px-3 py-2 text-sm mb-2" 
+                defaultValue="calendar_list_events, gmail_list_threads, gmail_get_thread, gmail_create_draft, gmail_send_email, planner_schedule_workflow"
+              />
+            </div>
+            <div className="border-t pt-2 mt-2">
+              <p className="text-sm font-medium mb-1">Objective</p>
+              <textarea
+                name="objectivePrompt"
+                placeholder="Objective (e.g. Find me a time to meet with Brian tomorrow)"
+                className="h-24 w-full rounded border px-3 py-2 text-sm mb-2"
+              />
+            </div>
             <Button type="submit" size="sm">
               Create Agent
             </Button>
@@ -67,66 +94,7 @@ export function ControlPlanePanel() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Dispatch Objective</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="space-y-3"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setDispatchState({});
-              const form = new FormData(event.currentTarget);
-              const agentId = String(form.get("agentId") ?? "");
-              const payload = {
-                objectivePrompt: String(form.get("objectivePrompt") ?? ""),
-                tenantId: String(form.get("tenantId") ?? ""),
-                workspaceId: String(form.get("workspaceId") ?? ""),
-                threadId: String(form.get("threadId") ?? "")
-              };
-              const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/runs`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(payload)
-              });
-              const body = (await response.json()) as {
-                error?: string;
-                data?: { run: { id: string } };
-              };
-              if (!response.ok || !body.data?.run?.id) {
-                setDispatchState({ error: body.error ?? "Failed to dispatch objective" });
-                return;
-              }
-              const runId = body.data.run.id;
-              setDispatchState({ success: `Dispatched run ${runId}` });
-              router.push(
-                `/runs/${encodeURIComponent(runId)}?tenantId=${encodeURIComponent(payload.tenantId)}&workspaceId=${encodeURIComponent(payload.workspaceId)}`
-              );
-              router.refresh();
-            }}
-          >
-            <input name="agentId" placeholder="agent id" className="w-full rounded border px-3 py-2 text-sm" />
-            <textarea
-              name="objectivePrompt"
-              placeholder="objective_prompt"
-              className="h-24 w-full rounded border px-3 py-2 text-sm"
-            />
-            <input name="tenantId" placeholder="tenant id" className="w-full rounded border px-3 py-2 text-sm" />
-            <input
-              name="workspaceId"
-              placeholder="workspace id"
-              className="w-full rounded border px-3 py-2 text-sm"
-            />
-            <input name="threadId" placeholder="thread id (optional)" className="w-full rounded border px-3 py-2 text-sm" />
-            <Button type="submit" size="sm">
-              Start Run
-            </Button>
-            {dispatchState.error ? <p className="text-sm text-destructive">{dispatchState.error}</p> : null}
-            {dispatchState.success ? <p className="text-sm text-emerald-700">{dispatchState.success}</p> : null}
-          </form>
-        </CardContent>
-      </Card>
+
     </section>
   );
 }

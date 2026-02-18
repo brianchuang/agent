@@ -6,7 +6,7 @@ const errors_1 = require("./errors");
 const observability_1 = require("./observability");
 const repositories_1 = require("./persistence/repositories");
 const validation_1 = require("./validation");
-const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 class EnvelopeValidationError extends Error {
     code = "ENVELOPE_VALIDATION_FAILED";
     constructor(message) {
@@ -921,8 +921,8 @@ class AgentRuntime {
         if (request.schemaVersion !== "v1") {
             throw new errors_1.ValidationRuntimeError(`Unsupported objective request schemaVersion: ${String(request.schemaVersion)}`);
         }
-        if (!UUID_V4_RE.test(request.requestId)) {
-            throw new errors_1.ValidationRuntimeError("Invalid requestId: expected UUID v4");
+        if (!UUID_V7_RE.test(request.requestId)) {
+            throw new errors_1.ValidationRuntimeError("Invalid requestId: expected UUID v7");
         }
         if (!request.tenantId) {
             throw new errors_1.ValidationRuntimeError("Invalid tenantId: value is required");
@@ -1095,8 +1095,8 @@ class AgentRuntime {
         if (signal.schemaVersion !== "v1") {
             throw new errors_1.SignalValidationError(`Unsupported signal schemaVersion: ${String(signal.schemaVersion)}`);
         }
-        if (!UUID_V4_RE.test(signal.signalId)) {
-            throw new errors_1.SignalValidationError("Invalid signalId: expected UUID v4");
+        if (!UUID_V7_RE.test(signal.signalId)) {
+            throw new errors_1.SignalValidationError("Invalid signalId: expected UUID v7");
         }
         if (!signal.tenantId || !signal.workspaceId || !signal.workflowId) {
             throw new errors_1.SignalValidationError("Invalid signal identity: tenantId, workspaceId, and workflowId are required");
@@ -1141,8 +1141,8 @@ class AgentRuntime {
         if (callback.schemaVersion !== "v1") {
             throw new errors_1.SignalValidationError(`Unsupported callback schemaVersion: ${String(callback.schemaVersion)}`);
         }
-        if (!UUID_V4_RE.test(callback.callbackId)) {
-            throw new errors_1.SignalValidationError("Invalid callbackId: expected UUID v4");
+        if (!UUID_V7_RE.test(callback.callbackId)) {
+            throw new errors_1.SignalValidationError("Invalid callbackId: expected UUID v7");
         }
         if (!callback.tenantId || !callback.workspaceId || !callback.workflowId) {
             throw new errors_1.SignalValidationError("Invalid callback identity: tenantId, workspaceId, and workflowId are required");
@@ -1206,8 +1206,8 @@ class AgentRuntime {
             }
             throw new EnvelopeValidationError(`Unsupported schemaVersion: ${String(req.schemaVersion)}`);
         }
-        if (!UUID_V4_RE.test(req.eventId)) {
-            throw new EnvelopeValidationError("Invalid eventId: expected UUID v4");
+        if (!UUID_V7_RE.test(req.eventId)) {
+            throw new EnvelopeValidationError("Invalid eventId: expected UUID v7");
         }
         if (!req.objectiveId || !req.type || !req.threadId) {
             throw new EnvelopeValidationError("Envelope requires objectiveId, type, and threadId");

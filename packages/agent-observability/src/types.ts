@@ -11,6 +11,8 @@ export type Agent = {
   lastHeartbeatAt: string;
   errorRate: number;
   avgLatencyMs: number;
+  systemPrompt?: string;
+  enabledTools?: string[];
 };
 
 export type Run = {
@@ -106,6 +108,15 @@ export type WorkflowQueueJobCreateInput = {
   availableAt: string;
 };
 
+export type WorkflowQueueJobsFilter = {
+  statuses?: WorkflowQueueJobStatus[];
+  availableAfter?: string;
+  availableBefore?: string;
+  tenantId?: string;
+  workspaceId?: string;
+  limit?: number;
+};
+
 export type ClaimWorkflowJobsInput = {
   workerId: string;
   limit: number;
@@ -138,8 +149,56 @@ export interface ObservabilityStore {
   listRunEvents(runId: string): Promise<RunEvent[]>;
   appendRunEvent(runEvent: RunEvent): Promise<void>;
   enqueueWorkflowJob(input: WorkflowQueueJobCreateInput): Promise<WorkflowQueueJob>;
+  listWorkflowJobs(filter?: WorkflowQueueJobsFilter): Promise<WorkflowQueueJob[]>;
   claimWorkflowJobs(input: ClaimWorkflowJobsInput): Promise<WorkflowQueueJob[]>;
   completeWorkflowJob(input: CompleteWorkflowJobInput): Promise<void>;
   failWorkflowJob(input: FailWorkflowJobInput): Promise<void>;
   getWorkflowJob(jobId: string): Promise<WorkflowQueueJob | undefined>;
+
+  // Auth & Connections
+  upsertUser(input: UpsertUserInput): Promise<User>;
+  upsertConnection(input: UpsertConnectionInput): Promise<Connection>;
+  getConnection(userId: string, providerId: string): Promise<Connection | undefined>;
+  deleteConnection(userId: string, providerId: string): Promise<void>;
 }
+
+export type User = {
+  id: string;
+  email: string;
+  name?: string;
+  image?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Connection = {
+  id: string;
+  userId: string;
+  providerId: string;
+  providerAccountId: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  scope?: string;
+  tokenType?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpsertUserInput = {
+  id: string;
+  email: string;
+  name?: string;
+  image?: string;
+};
+
+export type UpsertConnectionInput = {
+  userId: string;
+  providerId: string;
+  providerAccountId: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  scope?: string;
+  tokenType?: string;
+};

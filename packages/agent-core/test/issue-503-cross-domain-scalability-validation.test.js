@@ -11,7 +11,7 @@ const {
 
 function request(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -59,7 +59,7 @@ test("ISSUE-503: cross-domain suites run through the same planner loop and tool 
     execute: async () => {
       return await agentRuntime.runPlannerLoop(
         request({
-          requestId: "11111111-1111-4111-8111-111111111111",
+          requestId: "11111111-1111-7111-8111-111111111111",
           workflowId: "wf-503-recruiting",
           threadId: "thread-recruiting",
           objective_prompt: "Schedule candidate interview and confirm slots"
@@ -97,7 +97,7 @@ test("ISSUE-503: cross-domain suites run through the same planner loop and tool 
     execute: async () => {
       return await opsRuntime.runPlannerLoop(
         request({
-          requestId: "22222222-2222-4222-8222-222222222222",
+          requestId: "22222222-2222-7222-8222-222222222222",
           tenantId: "tenant-b",
           workspaceId: "ops",
           workflowId: "wf-503-ops",
@@ -149,7 +149,7 @@ test("ISSUE-503: cross-domain suites run through the same planner loop and tool 
         requests.push(
           runtime.runPlannerLoop(
             request({
-              requestId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+              requestId: `00000000-0000-7000-8000-${String(i).padStart(12, "0")}`,
               tenantId,
               workspaceId,
               workflowId,
@@ -235,7 +235,7 @@ test("ISSUE-503: composition boundaries support swapped planner pipeline stages"
             execute: async () => {
               return await runtime.runPlannerLoop(
                 request({
-                  requestId: "33333333-3333-4333-8333-333333333333",
+                  requestId: "33333333-3333-7333-8333-333333333333",
                   workflowId: "wf-503-stages",
                   threadId: "thread-stage-swap",
                   objective_prompt: "Use custom planner stage pipeline"
@@ -282,7 +282,7 @@ test("ISSUE-503: composition boundaries support swapped planner pipeline stages"
             execute: async () => {
               return await runtime.runPlannerLoop(
                 request({
-                  requestId: "44444444-4444-4444-8444-444444444444",
+                  requestId: "44444444-4444-7444-8444-444444444444",
                   workflowId: "wf-503-stages-2",
                   threadId: "thread-stage-swap-2",
                   objective_prompt: "Use custom execute stage"

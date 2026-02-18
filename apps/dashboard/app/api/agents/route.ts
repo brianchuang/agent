@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { createAgent, listAgents } from "@/lib/dashboard-service";
+import { createAgentAndRun, listAgents } from "@/lib/dashboard-service";
+
+import { auth } from "@/lib/auth";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -17,27 +19,33 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as Partial<{
-    id: string;
-    name: string;
-    owner: string;
-    env: "prod" | "staging";
-    version: string;
-  }>;
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  if (!body.id || !body.name || !body.owner || !body.env || !body.version) {
+  const body = (await req.json()) as {
+    name: string;
+    systemPrompt?: string;
+    enabledTools?: string[];
+    objectivePrompt?: string;
+    workspaceId?: string;
+  };
+
+  if (!body.name) {
     return NextResponse.json(
-      { error: "id, name, owner, env, and version are required" },
+      { error: "name is required" },
       { status: 400 }
     );
   }
 
-  const agent = await createAgent({
-    id: body.id,
+  const result = await createAgentAndRun({
     name: body.name,
-    owner: body.owner,
-    env: body.env,
-    version: body.version
+    systemPrompt: body.systemPrompt,
+    enabledTools: body.enabledTools,
+    objectivePrompt: body.objectivePrompt,
+    tenantId: session.user.id,
+    workspaceId: body.workspaceId ?? "personal"
   });
-  return NextResponse.json({ data: agent }, { status: 201 });
+  return NextResponse.json({ data: result }, { status: 201 });
 }

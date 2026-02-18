@@ -14,7 +14,15 @@
     },
     "test": {
       "dependsOn": ["^test"],
-      "outputs": []
     }
-  }
+  },
+  "globalEnv": [
+    "AUTH_SECRET",
+    "ENCRYPTION_KEY",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET", 
+    "NEXTAUTH_URL",
+    "GROQ_API_KEY",
+    "AGENT_DATABASE_URL"
+  ]
 }

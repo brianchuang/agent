@@ -16,7 +16,7 @@ function toolInput(overrides = {}) {
     tenantId: "tenant-a",
     workspaceId: "agent",
     workflowId: "wf-303",
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     stepNumber: 0,
     toolName: "message.send",
     args: { to: "user@example.com", body: "hello" },
@@ -26,7 +26,7 @@ function toolInput(overrides = {}) {
 
 function objectiveRequest(overrides = {}) {
   return {
-    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestId: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -92,7 +92,7 @@ test("ISSUE-303: retryable failures follow deterministic backoff and eventually 
   assert.deepEqual(sleeps, [100, 200]);
   assert.equal(result.status, "ok");
 
-  const record = retryStore.get("tenant-a:wf-303:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:message.send");
+  const record = retryStore.get("tenant-a:wf-303:aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa:0:message.send");
   assert.equal(record.attemptCount, 3);
   assert.equal(record.terminalReason, undefined);
 });
@@ -139,7 +139,7 @@ test("ISSUE-303: terminal non-retryable failures stop immediately and persist fa
   });
 
   assert.equal(calls, 1);
-  const record = retryStore.get("tenant-a:wf-303:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:message.send");
+  const record = retryStore.get("tenant-a:wf-303:aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa:0:message.send");
   assert.equal(record.attemptCount, 1);
   assert.equal(record.lastErrorCode, "HTTP_400");
   assert.equal(record.terminalReason, "non_retryable");
@@ -186,7 +186,7 @@ test("ISSUE-303: retry exhaustion records terminal reason and last attempt metad
   assert.equal(calls, 2);
   assert.deepEqual(sleeps, [50]);
 
-  const record = retryStore.get("tenant-a:wf-303:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:message.send");
+  const record = retryStore.get("tenant-a:wf-303:aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa:0:message.send");
   assert.equal(record.attemptCount, 2);
   assert.equal(record.terminalReason, "max_attempts_exhausted");
 });
@@ -252,7 +252,7 @@ test("ISSUE-303: provider callback is routed into external_event_signal resume w
   assert.equal(providerCalls, 1);
 
   const resumed = await runtime.resumeWithProviderCallback({
-    callbackId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    callbackId: "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
     schemaVersion: "v1",
     tenantId: "tenant-a",
     workspaceId: "agent",
@@ -267,7 +267,7 @@ test("ISSUE-303: provider callback is routed into external_event_signal resume w
 
   const completed = await runtime.runPlannerLoop(
     objectiveRequest({
-      requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+      requestId: "cccccccc-cccc-7ccc-8ccc-cccccccccccc"
     }),
     {
       planner: ({ prior_step_summaries }) => {

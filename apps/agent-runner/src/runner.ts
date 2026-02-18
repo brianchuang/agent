@@ -17,6 +17,7 @@ export type QueueRunnerDependencies = {
     | "appendRunEvent"
   >;
   execute: (job: WorkflowQueueJob) => Promise<Record<string, JsonValue>>;
+  executeTimeoutMs?: number;
 };
 
 export type QueueRunnerInput = ClaimWorkflowJobsInput;
@@ -26,6 +27,27 @@ export type QueueRunnerResult = {
   completed: number;
   failed: number;
 };
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 function assertScope(input: QueueRunnerInput) {
   const hasTenant = typeof input.tenantId === "string" && input.tenantId.length > 0;
@@ -39,6 +61,7 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
   return {
     async runOnce(input: QueueRunnerInput): Promise<QueueRunnerResult> {
       assertScope(input);
+      const executeTimeoutMs = deps.executeTimeoutMs ?? 120_000;
       const claimed = await deps.store.claimWorkflowJobs(input);
       let completed = 0;
       let failed = 0;
@@ -68,7 +91,11 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
             causationId: job.id
           });
 
-          const output = await deps.execute(job);
+          const output = await withTimeout(
+            deps.execute(job),
+            executeTimeoutMs,
+            `Workflow execution (${job.workflowId})`
+          );
           await deps.store.completeWorkflowJob({
             jobId: job.id,
             leaseToken: job.leaseToken ?? ""
@@ -107,6 +134,19 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
         } catch (error) {
           failed += 1;
           const message = error instanceof Error ? error.message : String(error);
+
+          const failedRun = await deps.store.getRun(job.runId);
+          if (failedRun) {
+            const endedAt = new Date().toISOString();
+            await deps.store.upsertRun({
+              ...failedRun,
+              status: "failed",
+              endedAt,
+              errorSummary: message,
+              latencyMs: Math.max(0, new Date(endedAt).getTime() - new Date(failedRun.startedAt).getTime())
+            });
+          }
+
           await deps.store.failWorkflowJob({
             jobId: job.id,
             leaseToken: job.leaseToken ?? "",
