@@ -99,6 +99,59 @@ export type IngestSlackThreadReplyResult =
   | { status: "not_waiting"; workflowId: string; runId: string }
   | { status: "queued_signal"; workflowId: string; runId: string; signalId: string; jobId: string };
 
+export type InboxMessageRole = "user" | "agent";
+
+export type InboxMessage = {
+  id: string;
+  runId: string;
+  threadId: string;
+  workflowId: string;
+  ts: string;
+  role: InboxMessageRole;
+  text: string;
+};
+
+export type InboxThreadSummary = {
+  threadId: string;
+  workflowId: string;
+  runId: string;
+  agentId: string;
+  objectivePrompt?: string;
+  lastMessage: string;
+  lastMessageAt: string;
+  unreadCount: number;
+};
+
+export type SendInboxMessageInput = {
+  tenantId: string;
+  workspaceId: string;
+  message: string;
+  threadId?: string;
+  agentId?: string;
+};
+
+export type MarkInboxThreadReadInput = {
+  tenantId: string;
+  workspaceId: string;
+  threadId: string;
+  readAt?: string;
+};
+
+export type AgentDashboardStatus = "active" | "idle" | "waiting_on_you" | "blocked" | "error";
+
+export type AgentSummary = {
+  agentId: string;
+  agentName: string;
+  objectiveSummary?: string;
+  status: AgentDashboardStatus;
+  lastUpdateAt?: string;
+  latestOutcomeSummary: string;
+  nextPlannedAction?: string;
+  requiredUserAction?: string;
+};
+
+const INBOX_THREAD_STATE_PREFIX = "inbox-thread:";
+
 function isWithinLast24Hours(isoDate: string) {
   const now = Date.now();
   const started = new Date(isoDate).getTime();
@@ -135,6 +188,192 @@ function extractObjectivePromptFromQueuedEvent(events: RunEvent[]): string | und
   return typeof objectivePrompt === "string" && objectivePrompt.trim().length > 0
     ? objectivePrompt
     : undefined;
+}
+
+function asTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function inboxStateWorkflowId(threadId: string) {
+  return `${INBOX_THREAD_STATE_PREFIX}${threadId}`;
+}
+
+function extractRunRoutingMeta(events: RunEvent[]): {
+  workflowId?: string;
+  threadId?: string;
+  objectivePrompt?: string;
+} {
+  const queued = events.find((event) => event.message === "Run queued");
+  return {
+    workflowId: asTrimmedString(queued?.payload?.workflow_id),
+    threadId: asTrimmedString(queued?.payload?.thread_id),
+    objectivePrompt: asTrimmedString(queued?.payload?.objective_prompt)
+  };
+}
+
+function projectInboxMessages(events: RunEvent[]): InboxMessage[] {
+  const sorted = events.slice().sort((left, right) => new Date(left.ts).getTime() - new Date(right.ts).getTime());
+  const { threadId, workflowId } = extractRunRoutingMeta(sorted);
+  if (!threadId || !workflowId) {
+    return [];
+  }
+
+  const messages: InboxMessage[] = [];
+  for (const event of sorted) {
+    if (event.message === "Run queued") {
+      const objectivePrompt = asTrimmedString(event.payload?.objective_prompt);
+      if (!objectivePrompt) {
+        continue;
+      }
+      messages.push({
+        id: `${event.id}:queued`,
+        runId: event.runId,
+        threadId,
+        workflowId,
+        ts: event.ts,
+        role: "user",
+        text: objectivePrompt
+      });
+      continue;
+    }
+
+    if (event.message === "Run waiting for signal") {
+      const waitingQuestion = asTrimmedString(
+        typeof event.payload?.output === "object" && event.payload.output
+          ? (event.payload.output as { waitingQuestion?: unknown }).waitingQuestion
+          : undefined
+      );
+      if (!waitingQuestion) {
+        continue;
+      }
+      messages.push({
+        id: `${event.id}:waiting`,
+        runId: event.runId,
+        threadId,
+        workflowId,
+        ts: event.ts,
+        role: "agent",
+        text: waitingQuestion
+      });
+      continue;
+    }
+
+    if (event.message === "Run completed") {
+      const output =
+        typeof event.payload?.output === "object" && event.payload.output
+          ? (event.payload.output as { result?: unknown })
+          : undefined;
+      const completionText =
+        asTrimmedString(output?.result) ??
+        asTrimmedString(
+          typeof output?.result === "object" && output.result
+            ? (output.result as { message?: unknown }).message
+            : undefined
+        );
+      if (!completionText) {
+        continue;
+      }
+      messages.push({
+        id: `${event.id}:completed`,
+        runId: event.runId,
+        threadId,
+        workflowId,
+        ts: event.ts,
+        role: "agent",
+        text: completionText
+      });
+      continue;
+    }
+
+    if (event.message === "Inbound user input signal queued") {
+      const userMessage = asTrimmedString(event.payload?.message);
+      if (!userMessage) {
+        continue;
+      }
+      messages.push({
+        id: `${event.id}:signal`,
+        runId: event.runId,
+        threadId,
+        workflowId,
+        ts: event.ts,
+        role: "user",
+        text: userMessage
+      });
+    }
+  }
+
+  return messages;
+}
+
+function extractWaitingQuestion(events: RunEvent[]): string | undefined {
+  for (const event of events) {
+    if (event.message !== "Run waiting for signal") {
+      continue;
+    }
+    const question = asTrimmedString(
+      typeof event.payload?.output === "object" && event.payload.output
+        ? (event.payload.output as { waitingQuestion?: unknown }).waitingQuestion
+        : undefined
+    );
+    if (question) {
+      return question;
+    }
+  }
+  return undefined;
+}
+
+function isRunAwaitingUserSignal(events: RunEvent[]): boolean {
+  const sorted = events
+    .slice()
+    .sort((left, right) => new Date(right.ts).getTime() - new Date(left.ts).getTime());
+  for (const event of sorted) {
+    if (event.message === "Run waiting for signal") {
+      return true;
+    }
+    if (
+      event.message === "Workflow signal resumed" ||
+      event.message === "Run completed" ||
+      event.message === "Run failed"
+    ) {
+      return false;
+    }
+  }
+  return false;
+}
+
+function hasBlockedSignal(event?: RunEvent): boolean {
+  if (!event) {
+    return false;
+  }
+  const message = event.message.toLowerCase();
+  return message.includes("blocked") || message.includes("approval");
+}
+
+function compareIsoDesc(left?: string, right?: string): number {
+  const leftTs = left ? new Date(left).getTime() : 0;
+  const rightTs = right ? new Date(right).getTime() : 0;
+  return rightTs - leftTs;
+}
+
+function statusSortOrder(status: AgentDashboardStatus): number {
+  switch (status) {
+    case "waiting_on_you":
+      return 0;
+    case "error":
+      return 1;
+    case "blocked":
+      return 2;
+    case "active":
+      return 3;
+    case "idle":
+      return 4;
+    default:
+      return 5;
+  }
 }
 
 export function createDashboardService(store: ObservabilityStore) {
@@ -277,6 +516,377 @@ export function createDashboardService(store: ObservabilityStore) {
       return runs.filter((run) => runIdSet.has(run.id));
     },
 
+    async listAgentSummaries(scope?: TenantWorkspaceScope): Promise<AgentSummary[]> {
+      assertScope(scope);
+      const [agents, runs] = await Promise.all([this.listAgents(scope), this.listRuns(scope)]);
+
+      const runsByAgent = new Map<string, Run[]>();
+      for (const run of runs) {
+        const existing = runsByAgent.get(run.agentId);
+        if (existing) {
+          existing.push(run);
+        } else {
+          runsByAgent.set(run.agentId, [run]);
+        }
+      }
+
+      const summaries = await Promise.all(
+        agents.map(async (agent) => {
+          const agentRuns = (runsByAgent.get(agent.id) ?? []).slice().sort((left, right) =>
+            compareIsoDesc(left.startedAt, right.startedAt)
+          );
+          const latestRun = agentRuns[0];
+          if (!latestRun) {
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              status: "idle",
+              lastUpdateAt: agent.lastHeartbeatAt,
+              latestOutcomeSummary: "No recent activity.",
+              nextPlannedAction: "Waiting for a new request."
+            } satisfies AgentSummary;
+          }
+
+          const events = (await this.listRunEvents(latestRun.id, scope)).slice().sort((left, right) =>
+            compareIsoDesc(left.ts, right.ts)
+          );
+          const latestEvent = events[0];
+          const queuedEvent = events.find((event) => event.message === "Run queued");
+          const objectiveSummary = asTrimmedString(queuedEvent?.payload?.objective_prompt);
+          const waitingQuestion = extractWaitingQuestion(events);
+
+          if (waitingQuestion) {
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              objectiveSummary,
+              status: "waiting_on_you",
+              lastUpdateAt: latestEvent?.ts ?? latestRun.startedAt,
+              latestOutcomeSummary: "Waiting for your answer to continue.",
+              nextPlannedAction: "Continue as soon as you reply.",
+              requiredUserAction: waitingQuestion
+            } satisfies AgentSummary;
+          }
+
+          if (latestRun.status === "failed") {
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              objectiveSummary,
+              status: "error",
+              lastUpdateAt: latestEvent?.ts ?? latestRun.startedAt,
+              latestOutcomeSummary: "Last task failed and needs attention.",
+              nextPlannedAction: "Review details in advanced diagnostics."
+            } satisfies AgentSummary;
+          }
+
+          if (hasBlockedSignal(latestEvent)) {
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              objectiveSummary,
+              status: "blocked",
+              lastUpdateAt: latestEvent?.ts ?? latestRun.startedAt,
+              latestOutcomeSummary: "Work is blocked and needs review.",
+              nextPlannedAction: "Resolve blocker and retry."
+            } satisfies AgentSummary;
+          }
+
+          if (latestRun.status === "queued" || latestRun.status === "running") {
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              objectiveSummary,
+              status: "active",
+              lastUpdateAt: latestEvent?.ts ?? latestRun.startedAt,
+              latestOutcomeSummary: "Working on your latest request.",
+              nextPlannedAction: "Will post an update when complete."
+            } satisfies AgentSummary;
+          }
+
+          return {
+            agentId: agent.id,
+            agentName: agent.name,
+            objectiveSummary,
+            status: "idle",
+            lastUpdateAt: latestEvent?.ts ?? latestRun.startedAt,
+            latestOutcomeSummary: "Last task completed.",
+            nextPlannedAction: "Waiting for a new request."
+          } satisfies AgentSummary;
+        })
+      );
+
+      return summaries.sort((left, right) => {
+        const orderDelta = statusSortOrder(left.status) - statusSortOrder(right.status);
+        if (orderDelta !== 0) {
+          return orderDelta;
+        }
+        return compareIsoDesc(left.lastUpdateAt, right.lastUpdateAt);
+      });
+    },
+
+    async listInboxThreads(scope: TenantWorkspaceScope): Promise<InboxThreadSummary[]> {
+      assertScope(scope);
+      assertNonEmpty(scope.tenantId, "tenantId");
+      assertNonEmpty(scope.workspaceId, "workspaceId");
+
+      const runs = await this.listRuns(scope);
+      const rows = await Promise.all(
+        runs.map(async (run) => {
+          const events = await this.listRunEvents(run.id, scope);
+          const meta = extractRunRoutingMeta(events);
+          if (!meta.threadId || !meta.workflowId) {
+            return undefined;
+          }
+          const messages = projectInboxMessages(events);
+          if (messages.length === 0) {
+            return undefined;
+          }
+          return {
+            threadId: meta.threadId,
+            workflowId: meta.workflowId,
+            runId: run.id,
+            agentId: run.agentId,
+            objectivePrompt: meta.objectivePrompt,
+            messages
+          };
+        })
+      );
+
+      const byThread = new Map<
+        string,
+        {
+          threadId: string;
+          workflowId: string;
+          runId: string;
+          agentId: string;
+          objectivePrompt?: string;
+          messages: InboxMessage[];
+        }
+      >();
+
+      for (const row of rows) {
+        if (!row) {
+          continue;
+        }
+        const current = byThread.get(row.threadId);
+        if (!current) {
+          byThread.set(row.threadId, row);
+          continue;
+        }
+        const merged = current.messages.concat(row.messages).sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+        const currentLast = current.messages[current.messages.length - 1];
+        const nextLast = row.messages[row.messages.length - 1];
+        const useNext = Boolean(nextLast && currentLast && new Date(nextLast.ts).getTime() > new Date(currentLast.ts).getTime());
+        byThread.set(row.threadId, {
+          threadId: row.threadId,
+          workflowId: useNext ? row.workflowId : current.workflowId,
+          runId: useNext ? row.runId : current.runId,
+          agentId: useNext ? row.agentId : current.agentId,
+          objectivePrompt: current.objectivePrompt ?? row.objectivePrompt,
+          messages: merged
+        });
+      }
+
+      const summaries = await Promise.all(
+        Array.from(byThread.values()).map(async (thread) => {
+          const snapshot = await store.getWorkflowRuntimeSnapshot(
+            scope.tenantId as string,
+            scope.workspaceId as string,
+            inboxStateWorkflowId(thread.threadId)
+          );
+          const readAt = asTrimmedString(
+            typeof snapshot?.payload === "object" && snapshot.payload
+              ? (snapshot.payload as { inboxReadAt?: unknown }).inboxReadAt
+              : undefined
+          );
+          const unreadCount = thread.messages.filter(
+            (message) =>
+              message.role === "agent" &&
+              (!readAt || new Date(message.ts).getTime() > new Date(readAt).getTime())
+          ).length;
+          const last = thread.messages[thread.messages.length - 1];
+          return {
+            threadId: thread.threadId,
+            workflowId: thread.workflowId,
+            runId: thread.runId,
+            agentId: thread.agentId,
+            objectivePrompt: thread.objectivePrompt,
+            lastMessage: last.text,
+            lastMessageAt: last.ts,
+            unreadCount
+          } satisfies InboxThreadSummary;
+        })
+      );
+
+      return summaries.sort(
+        (left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime()
+      );
+    },
+
+    async listInboxMessages(scope: TenantWorkspaceScope, threadId: string): Promise<InboxMessage[]> {
+      assertScope(scope);
+      assertNonEmpty(scope.tenantId, "tenantId");
+      assertNonEmpty(scope.workspaceId, "workspaceId");
+      assertNonEmpty(threadId, "threadId");
+
+      const runs = await this.listRuns(scope);
+      const rows = await Promise.all(
+        runs.map(async (run) => {
+          const events = await this.listRunEvents(run.id, scope);
+          const meta = extractRunRoutingMeta(events);
+          if (meta.threadId !== threadId) {
+            return [] as InboxMessage[];
+          }
+          return projectInboxMessages(events);
+        })
+      );
+
+      return rows
+        .flat()
+        .sort((left, right) => new Date(left.ts).getTime() - new Date(right.ts).getTime());
+    },
+
+    async markInboxThreadRead(input: MarkInboxThreadReadInput) {
+      assertNonEmpty(input.tenantId, "tenantId");
+      assertNonEmpty(input.workspaceId, "workspaceId");
+      assertNonEmpty(input.threadId, "threadId");
+      const readAt = input.readAt ?? new Date().toISOString();
+      await store.upsertWorkflowRuntimeSnapshot({
+        tenantId: input.tenantId,
+        workspaceId: input.workspaceId,
+        workflowId: inboxStateWorkflowId(input.threadId),
+        payload: { inboxReadAt: readAt }
+      });
+      return { threadId: input.threadId, readAt };
+    },
+
+    async sendInboxMessage(input: SendInboxMessageInput) {
+      assertNonEmpty(input.tenantId, "tenantId");
+      assertNonEmpty(input.workspaceId, "workspaceId");
+      assertNonEmpty(input.message, "message");
+      const scope = { tenantId: input.tenantId, workspaceId: input.workspaceId };
+      const message = input.message.trim();
+      const requestedThreadId = asTrimmedString(input.threadId);
+      let resolvedAgentId = asTrimmedString(input.agentId);
+      let threadRunMeta:
+        | {
+            run: Run;
+            workflowId: string;
+            threadId: string;
+            events: RunEvent[];
+          }
+        | undefined;
+
+      if (requestedThreadId) {
+        const runs = await this.listRuns(scope);
+        for (const run of runs) {
+          const events = await this.listRunEvents(run.id, scope);
+          const meta = extractRunRoutingMeta(events);
+          if (meta.threadId !== requestedThreadId || !meta.workflowId) {
+            continue;
+          }
+          if (!resolvedAgentId) {
+            resolvedAgentId = run.agentId;
+          }
+          if (!threadRunMeta || new Date(run.startedAt).getTime() > new Date(threadRunMeta.run.startedAt).getTime()) {
+            threadRunMeta = {
+              run,
+              workflowId: meta.workflowId,
+              threadId: requestedThreadId,
+              events
+            };
+          }
+        }
+
+        if (threadRunMeta && threadRunMeta.run.status === "queued" && isRunAwaitingUserSignal(threadRunMeta.events)) {
+          const signalId = uuidv7();
+          const occurredAt = new Date().toISOString();
+          await store.enqueueWorkflowSignal({
+            signalId,
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            workflowId: threadRunMeta.workflowId,
+            runId: threadRunMeta.run.id,
+            signalType: "user_input_signal",
+            occurredAt,
+            payload: {
+              message,
+              provider: {
+                channelType: "web_ui",
+                threadId: requestedThreadId
+              }
+            }
+          });
+
+          await store.appendRunEvent({
+            id: uuidv7(),
+            runId: threadRunMeta.run.id,
+            ts: new Date().toISOString(),
+            type: "state",
+            level: "info",
+            message: "Inbound user input signal queued",
+            payload: {
+              signalId,
+              workflowId: threadRunMeta.workflowId,
+              threadId: requestedThreadId,
+              message,
+              channelType: "web_ui"
+            },
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            correlationId: threadRunMeta.run.id,
+            causationId: signalId
+          });
+
+          const objectivePrompt =
+            extractObjectivePromptFromQueuedEvent(threadRunMeta.events) ??
+            "Continue workflow from pending user input signal.";
+          const job = await store.enqueueWorkflowJob({
+            id: `job_${uuidv7()}`,
+            runId: threadRunMeta.run.id,
+            agentId: threadRunMeta.run.agentId,
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            workflowId: threadRunMeta.workflowId,
+            requestId: `req_signal_${signalId}`,
+            threadId: requestedThreadId,
+            objectivePrompt,
+            maxAttempts: 3,
+            availableAt: new Date().toISOString()
+          });
+
+          return {
+            threadId: requestedThreadId,
+            run: threadRunMeta.run,
+            signalId,
+            jobId: job.id
+          };
+        }
+      }
+
+      if (!resolvedAgentId) {
+        const agents = await store.listAgents();
+        if (agents.length === 0) {
+          throw new Error("No agents found. Create an agent before sending inbox messages.");
+        }
+        resolvedAgentId = agents[0].id;
+      }
+
+      const created = await this.dispatchObjectiveRun({
+        agentId: resolvedAgentId,
+        objectivePrompt: message,
+        tenantId: input.tenantId,
+        workspaceId: input.workspaceId,
+        threadId: requestedThreadId
+      });
+
+      return {
+        threadId: created.job.threadId,
+        ...created
+      };
+    },
+
     async getTenantMessagingSettings(tenantId: string, workspaceId: string) {
       assertNonEmpty(tenantId, "tenantId");
       assertNonEmpty(workspaceId, "workspaceId");
@@ -332,7 +942,8 @@ export function createDashboardService(store: ObservabilityStore) {
       }
 
       const run = await store.getRun(mapping.runId);
-      if (!run || run.status !== "queued") {
+      const existingEvents = await store.listRunEvents(mapping.runId);
+      if (!run || run.status !== "queued" || !isRunAwaitingUserSignal(existingEvents)) {
         await store.appendRunEvent({
           id: uuidv7(),
           runId: mapping.runId,
@@ -396,7 +1007,8 @@ export function createDashboardService(store: ObservabilityStore) {
           channelId: input.channelId,
           threadId: input.threadId,
           messageId: input.messageId,
-          eventId: input.eventId
+          eventId: input.eventId,
+          message: input.message
         },
         tenantId: mapping.tenantId,
         workspaceId: mapping.workspaceId,
@@ -404,7 +1016,6 @@ export function createDashboardService(store: ObservabilityStore) {
         causationId: input.eventId
       });
 
-      const existingEvents = await store.listRunEvents(mapping.runId);
       const objectivePrompt =
         extractObjectivePromptFromQueuedEvent(existingEvents) ??
         "Continue workflow from pending user input signal.";
@@ -657,6 +1268,7 @@ const dashboardService = createDashboardService(getObservabilityStore());
 export const listAgents = dashboardService.listAgents.bind(dashboardService);
 export const getAgent = dashboardService.getAgent.bind(dashboardService);
 export const createAgent = dashboardService.createAgent.bind(dashboardService);
+export const listAgentSummaries = dashboardService.listAgentSummaries.bind(dashboardService);
 export const listRuns = dashboardService.listRuns.bind(dashboardService);
 export const getRun = dashboardService.getRun.bind(dashboardService);
 export const dispatchObjectiveRun = dashboardService.dispatchObjectiveRun.bind(dashboardService);
@@ -670,3 +1282,7 @@ export const createAgentAndRun = dashboardService.createAgentAndRun.bind(dashboa
 export const getTenantMessagingSettings = dashboardService.getTenantMessagingSettings.bind(dashboardService);
 export const upsertTenantMessagingSettings = dashboardService.upsertTenantMessagingSettings.bind(dashboardService);
 export const ingestSlackThreadReply = dashboardService.ingestSlackThreadReply.bind(dashboardService);
+export const listInboxThreads = dashboardService.listInboxThreads.bind(dashboardService);
+export const listInboxMessages = dashboardService.listInboxMessages.bind(dashboardService);
+export const markInboxThreadRead = dashboardService.markInboxThreadRead.bind(dashboardService);
+export const sendInboxMessage = dashboardService.sendInboxMessage.bind(dashboardService);
