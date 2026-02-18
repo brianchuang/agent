@@ -717,7 +717,7 @@ export class PostgresObservabilityStore implements ObservabilityStore {
 
   async upsertTenantMessagingSettings(input: UpsertTenantMessagingSettingsInput): Promise<void> {
     const workspaceId = input.workspaceId && input.workspaceId.trim().length > 0 ? input.workspaceId : "*";
-    const notifierCascade = input.notifierCascade ?? ["slack"];
+    const notifierCascade = input.notifierCascade ?? ["web_ui", "slack"];
     const slackEnabled = input.slack?.enabled ?? false;
     const slackDefaultChannel = input.slack?.defaultChannel ?? null;
     await this.pool.query(

@@ -229,7 +229,7 @@ export type UpsertConnectionInput = {
   tokenType?: string;
 };
 
-export type MessagingChannelType = "slack";
+export type MessagingChannelType = "web_ui" | "slack";
 
 export type SlackChannelSettings = {
   enabled?: boolean;
