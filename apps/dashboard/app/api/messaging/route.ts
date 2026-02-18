@@ -25,7 +25,7 @@ export async function PUT(req: Request) {
 
   const body = (await req.json()) as {
     workspaceId?: string;
-    notifierCascade?: Array<"slack">;
+    notifierCascade?: Array<"web_ui" | "slack">;
     slack?: {
       enabled?: boolean;
       defaultChannel?: string;
@@ -70,7 +70,7 @@ export async function POST(req: Request) {
   const data = await upsertTenantMessagingSettings({
     tenantId: session.user.id,
     workspaceId,
-    notifierCascade: ["slack"],
+    notifierCascade: ["web_ui", "slack"],
     slack: {
       enabled: slackEnabled,
       defaultChannel: slackDefaultChannel

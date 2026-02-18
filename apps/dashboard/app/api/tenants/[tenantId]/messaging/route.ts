@@ -35,7 +35,7 @@ export async function PUT(req: Request, { params }: Params) {
 
   const body = (await req.json()) as {
     workspaceId?: string;
-    notifierCascade?: Array<"slack">;
+    notifierCascade?: Array<"web_ui" | "slack">;
     slack?: {
       enabled?: boolean;
       defaultChannel?: string;
