@@ -5,7 +5,10 @@ import type {
 } from "@agent/observability";
 import type { WaitingSignalNotifier, WaitingSignalNotification } from "./runner";
 
-type TenantMessagingStore = Pick<ObservabilityStore, "getTenantMessagingSettings">;
+type TenantMessagingStore = Pick<
+  ObservabilityStore,
+  "getTenantMessagingSettings" | "upsertWorkflowMessageThread"
+>;
 
 type SlackNotifierConfig = {
   botToken: string;
@@ -18,6 +21,9 @@ type SlackNotifierConfig = {
 type SlackApiResponse = {
   ok?: boolean;
   error?: string;
+  channel?: string;
+  ts?: string;
+  team_id?: string;
 };
 
 function parseScopeChannels(raw: string | undefined): Record<string, string> {
@@ -77,7 +83,14 @@ async function postToSlack(
   input: WaitingSignalNotification,
   config: SlackNotifierConfig,
   channel: string
-): Promise<{ channel: string; target: string }> {
+): Promise<{
+  channel: string;
+  target: string;
+  channelId: string;
+  messageId: string;
+  threadId: string;
+  providerTeamId?: string;
+}> {
   const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
@@ -99,7 +112,56 @@ async function postToSlack(
     throw new Error(payload.error ? `Slack API error: ${payload.error}` : "Slack API error");
   }
 
-  return { channel: "slack", target: channel };
+  const messageId = typeof payload.ts === "string" && payload.ts.trim().length > 0 ? payload.ts : "";
+  if (!messageId) {
+    throw new Error("Slack API response missing message ts");
+  }
+  const channelId =
+    typeof payload.channel === "string" && payload.channel.trim().length > 0
+      ? payload.channel.trim()
+      : channel;
+
+  // Ensure the bot is actually a member of the channel; event subscriptions are scoped by membership.
+  const joinResponse = await fetch("https://slack.com/api/conversations.join", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.botToken}`,
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({
+      channel: channelId
+    })
+  });
+  if (!joinResponse.ok) {
+    throw new Error(`Slack conversations.join HTTP ${joinResponse.status}`);
+  }
+  const joinPayload = (await joinResponse.json()) as SlackApiResponse;
+  if (!joinPayload.ok && joinPayload.error !== "method_not_supported_for_channel_type") {
+    throw new Error(
+      joinPayload.error ? `Slack conversations.join error: ${joinPayload.error}` : "Slack conversations.join error"
+    );
+  }
+
+  const authResponse = await fetch("https://slack.com/api/auth.test", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.botToken}`,
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  });
+  const authPayload = authResponse.ok ? ((await authResponse.json()) as SlackApiResponse) : undefined;
+  const providerTeamId =
+    authPayload && authPayload.ok && typeof authPayload.team_id === "string"
+      ? authPayload.team_id
+      : undefined;
+  return {
+    channel: "slack",
+    target: channel,
+    channelId,
+    messageId,
+    threadId: messageId,
+    providerTeamId
+  };
 }
 
 function resolveSlackChannel(
@@ -143,7 +205,20 @@ export function createSlackWaitingSignalNotifier(input: {
         if (notifierType !== "slack") continue;
         const channel = resolveSlackChannel(waitingInput, input.config, tenantSettings);
         if (!channel) continue;
-        return await postToSlack(waitingInput, input.config, channel);
+        const result = await postToSlack(waitingInput, input.config, channel);
+        await input.store.upsertWorkflowMessageThread({
+          tenantId: waitingInput.tenantId,
+          workspaceId: waitingInput.workspaceId,
+          workflowId: waitingInput.workflowId,
+          runId: waitingInput.runId,
+          channelType: "slack",
+          channelId: result.channelId,
+          rootMessageId: result.messageId,
+          threadId: result.threadId,
+          providerTeamId: result.providerTeamId,
+          status: "active"
+        });
+        return result;
       }
 
       throw new Error(

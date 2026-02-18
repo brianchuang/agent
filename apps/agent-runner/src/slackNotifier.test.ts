@@ -10,15 +10,28 @@ test.afterEach(() => {
 
 test("slack notifier posts waiting question to configured channel", async () => {
   let called = false;
+  const persisted: Array<Record<string, string>> = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
-    called = true;
-    assert.equal(String(url), "https://slack.com/api/chat.postMessage");
-    assert.equal(init?.method, "POST");
-    const body = JSON.parse(String(init?.body));
-    assert.equal(body.channel, "C-ABC");
-    assert.match(body.text, /Needs label/);
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    const u = String(url);
+    if (u === "https://slack.com/api/chat.postMessage") {
+      called = true;
+      assert.equal(init?.method, "POST");
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.channel, "C-ABC");
+      assert.match(body.text, /Needs label/);
+      return new Response(
+        JSON.stringify({ ok: true, ts: "1730000000.123456", channel: "C123456" }),
+        { status: 200 }
+      );
+    }
+    if (u === "https://slack.com/api/conversations.join") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    if (u === "https://slack.com/api/auth.test") {
+      return new Response(JSON.stringify({ ok: true, team_id: "TTEAM123" }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch URL: ${u}`);
   }) as typeof fetch;
 
   try {
@@ -33,6 +46,31 @@ test("slack notifier posts waiting question to configured channel", async () => 
               enabled: true,
               defaultChannel: "C-ABC"
             }
+          };
+        },
+        async upsertWorkflowMessageThread(input) {
+          persisted.push({
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            workflowId: input.workflowId,
+            runId: input.runId,
+            channelId: input.channelId,
+            rootMessageId: input.rootMessageId,
+            threadId: input.threadId
+          });
+          return {
+            id: "thread-1",
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            workflowId: input.workflowId,
+            runId: input.runId,
+            channelType: "slack",
+            channelId: input.channelId,
+            rootMessageId: input.rootMessageId,
+            threadId: input.threadId,
+            status: "active",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
           };
         }
       },
@@ -53,7 +91,16 @@ test("slack notifier posts waiting question to configured channel", async () => 
       waitingQuestion: "Needs label"
     });
     assert.ok(called);
-    assert.deepEqual(result, { channel: "slack", target: "C-ABC" });
+    assert.deepEqual(result, {
+      channel: "slack",
+      target: "C-ABC",
+      channelId: "C123456",
+      messageId: "1730000000.123456",
+      threadId: "1730000000.123456",
+      providerTeamId: "TTEAM123"
+    });
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0]?.rootMessageId, "1730000000.123456");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -68,9 +115,22 @@ test("env factory reads scoped channel map", async () => {
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body));
-    assert.equal(body.channel, "C-SCOPED");
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    const u = String(_url);
+    if (u === "https://slack.com/api/chat.postMessage") {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.channel, "C-SCOPED");
+      return new Response(
+        JSON.stringify({ ok: true, ts: "1730000000.200000", channel: "C-SCOPED-ID" }),
+        { status: 200 }
+      );
+    }
+    if (u === "https://slack.com/api/conversations.join") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    if (u === "https://slack.com/api/auth.test") {
+      return new Response(JSON.stringify({ ok: true, team_id: "TTEAM123" }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch URL: ${u}`);
   }) as typeof fetch;
 
   try {
@@ -83,6 +143,22 @@ test("env factory reads scoped channel map", async () => {
           slack: {
             enabled: true
           }
+        };
+      },
+      async upsertWorkflowMessageThread(input) {
+        return {
+          id: "thread-env-1",
+          tenantId: input.tenantId,
+          workspaceId: input.workspaceId,
+          workflowId: input.workflowId,
+          runId: input.runId,
+          channelType: "slack",
+          channelId: input.channelId,
+          rootMessageId: input.rootMessageId,
+          threadId: input.threadId,
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
       }
     });
@@ -108,9 +184,22 @@ test("env notifier falls back to tenant default settings when workspace config i
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body));
-    assert.equal(body.channel, "C-TENANT-DEFAULT");
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    const u = String(_url);
+    if (u === "https://slack.com/api/chat.postMessage") {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.channel, "C-TENANT-DEFAULT");
+      return new Response(
+        JSON.stringify({ ok: true, ts: "1730000000.222222", channel: "C-TENANT-ID" }),
+        { status: 200 }
+      );
+    }
+    if (u === "https://slack.com/api/conversations.join") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    if (u === "https://slack.com/api/auth.test") {
+      return new Response(JSON.stringify({ ok: true, team_id: "TTEAM123" }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch URL: ${u}`);
   }) as typeof fetch;
 
   try {
@@ -123,6 +212,22 @@ test("env notifier falls back to tenant default settings when workspace config i
             enabled: true,
             defaultChannel: "C-TENANT-DEFAULT"
           }
+        };
+      },
+      async upsertWorkflowMessageThread(input) {
+        return {
+          id: "thread-env-2",
+          tenantId: input.tenantId,
+          workspaceId: input.workspaceId,
+          workflowId: input.workflowId,
+          runId: input.runId,
+          channelType: "slack",
+          channelId: input.channelId,
+          rootMessageId: input.rootMessageId,
+          threadId: input.threadId,
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
       }
     });

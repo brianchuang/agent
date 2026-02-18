@@ -132,6 +132,17 @@ interface PersistenceState {
   auditRecords: Map<string, AuditRecord[]>;
 }
 
+export interface InMemoryPersistenceSnapshot {
+  objectiveRequests: ObjectiveRequestV1[];
+  workflows: PersistedWorkflow[];
+  plannerSteps: Array<{ workflowKey: string; records: PlannerStepRecord[] }>;
+  waitingCheckpoints: WaitingWorkflowCheckpoint[];
+  signals: WorkflowSignalRecord[];
+  policyDecisions: Array<{ workflowKey: string; records: PolicyDecisionRecord[] }>;
+  approvalDecisions: Array<{ workflowKey: string; records: ApprovalDecisionRecord[] }>;
+  auditRecords: Array<{ workflowKey: string; records: AuditRecord[] }>;
+}
+
 export interface AgentPersistenceTransaction {
   recordObjectiveRequest(request: ObjectiveRequestV1): void;
   getWorkflow(scope: WorkflowScope): PersistedWorkflow | undefined;
@@ -430,6 +441,69 @@ export class InMemoryAgentPersistence implements AgentPersistencePort {
       return left.stepNumber - right.stepNumber;
     });
     return records;
+  }
+
+  toSnapshot(): InMemoryPersistenceSnapshot {
+    return {
+      objectiveRequests: Array.from(this.state.objectiveRequests.values()).map(clone),
+      workflows: Array.from(this.state.workflows.values()).map(clone),
+      plannerSteps: Array.from(this.state.plannerSteps.entries()).map(([key, records]) => ({
+        workflowKey: key,
+        records: clone(records)
+      })),
+      waitingCheckpoints: Array.from(this.state.waitingCheckpoints.values()).map(clone),
+      signals: Array.from(this.state.signals.values()).map(clone),
+      policyDecisions: Array.from(this.state.policyDecisions.entries()).map(([key, records]) => ({
+        workflowKey: key,
+        records: clone(records)
+      })),
+      approvalDecisions: Array.from(this.state.approvalDecisions.entries()).map(([key, records]) => ({
+        workflowKey: key,
+        records: clone(records)
+      })),
+      auditRecords: Array.from(this.state.auditRecords.entries()).map(([key, records]) => ({
+        workflowKey: key,
+        records: clone(records)
+      }))
+    };
+  }
+
+  static fromSnapshot(snapshot: InMemoryPersistenceSnapshot): InMemoryAgentPersistence {
+    const persistence = new InMemoryAgentPersistence();
+    persistence.state = {
+      objectiveRequests: new Map(
+        snapshot.objectiveRequests.map((request) => [
+          requestKey({
+            tenantId: request.tenantId,
+            workspaceId: request.workspaceId,
+            requestId: request.requestId
+          }),
+          clone(request)
+        ])
+      ),
+      workflows: new Map(
+        snapshot.workflows.map((workflow) => [workflowKey(workflow), clone(workflow)])
+      ),
+      plannerSteps: new Map(
+        snapshot.plannerSteps.map((entry) => [entry.workflowKey, clone(entry.records)])
+      ),
+      waitingCheckpoints: new Map(
+        snapshot.waitingCheckpoints.map((checkpoint) => [workflowKey(checkpoint), clone(checkpoint)])
+      ),
+      signals: new Map(
+        snapshot.signals.map((signal) => [signalKey(signal), clone(signal)])
+      ),
+      policyDecisions: new Map(
+        snapshot.policyDecisions.map((entry) => [entry.workflowKey, clone(entry.records)])
+      ),
+      approvalDecisions: new Map(
+        snapshot.approvalDecisions.map((entry) => [entry.workflowKey, clone(entry.records)])
+      ),
+      auditRecords: new Map(
+        snapshot.auditRecords.map((entry) => [entry.workflowKey, clone(entry.records)])
+      )
+    };
+    return persistence;
   }
 }
 

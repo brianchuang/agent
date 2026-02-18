@@ -159,6 +159,27 @@ export interface ObservabilityStore {
     workspaceId: string
   ): Promise<TenantMessagingSettings | undefined>;
   upsertTenantMessagingSettings(input: UpsertTenantMessagingSettingsInput): Promise<void>;
+  upsertWorkflowMessageThread(input: UpsertWorkflowMessageThreadInput): Promise<WorkflowMessageThread>;
+  getWorkflowMessageThreadByProviderThread(
+    input: WorkflowMessageThreadLookupInput
+  ): Promise<WorkflowMessageThread | undefined>;
+  recordInboundMessageReceipt(input: InboundMessageReceiptInput): Promise<boolean>;
+  enqueueWorkflowSignal(input: EnqueueWorkflowSignalInput): Promise<WorkflowSignalInboxRecord>;
+  listPendingWorkflowSignals(
+    input: ListPendingWorkflowSignalsInput
+  ): Promise<WorkflowSignalInboxRecord[]>;
+  markWorkflowSignalConsumed(signalId: string, consumedAt: string): Promise<void>;
+  getWorkflowRuntimeSnapshot(
+    tenantId: string,
+    workspaceId: string,
+    workflowId: string
+  ): Promise<WorkflowRuntimeSnapshotRecord | undefined>;
+  upsertWorkflowRuntimeSnapshot(input: {
+    tenantId: string;
+    workspaceId: string;
+    workflowId: string;
+    payload: JsonValue;
+  }): Promise<WorkflowRuntimeSnapshotRecord>;
 
   // Auth & Connections
   upsertUser(input: UpsertUserInput): Promise<User>;
@@ -228,4 +249,93 @@ export type UpsertTenantMessagingSettingsInput = {
   workspaceId?: string;
   notifierCascade?: MessagingChannelType[];
   slack?: SlackChannelSettings;
+};
+
+export type WorkflowMessageThreadStatus = "active" | "closed";
+
+export type WorkflowMessageThread = {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  workflowId: string;
+  runId: string;
+  channelType: MessagingChannelType;
+  channelId: string;
+  rootMessageId: string;
+  threadId: string;
+  providerTeamId?: string;
+  status: WorkflowMessageThreadStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpsertWorkflowMessageThreadInput = {
+  tenantId: string;
+  workspaceId: string;
+  workflowId: string;
+  runId: string;
+  channelType: MessagingChannelType;
+  channelId: string;
+  rootMessageId: string;
+  threadId: string;
+  providerTeamId?: string;
+  status?: WorkflowMessageThreadStatus;
+};
+
+export type WorkflowMessageThreadLookupInput = {
+  channelType: MessagingChannelType;
+  channelId: string;
+  threadId: string;
+  providerTeamId?: string;
+};
+
+export type InboundMessageReceiptInput = {
+  provider: MessagingChannelType;
+  providerTeamId: string;
+  eventId: string;
+  tenantId: string;
+  workspaceId: string;
+};
+
+export type WorkflowSignalInboxStatus = "pending" | "consumed";
+
+export type WorkflowSignalInboxRecord = {
+  signalId: string;
+  tenantId: string;
+  workspaceId: string;
+  workflowId: string;
+  runId: string;
+  signalType: "approval_signal" | "external_event_signal" | "timer_signal" | "user_input_signal";
+  occurredAt: string;
+  payload: JsonValue;
+  status: WorkflowSignalInboxStatus;
+  consumedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EnqueueWorkflowSignalInput = {
+  signalId: string;
+  tenantId: string;
+  workspaceId: string;
+  workflowId: string;
+  runId: string;
+  signalType: "approval_signal" | "external_event_signal" | "timer_signal" | "user_input_signal";
+  occurredAt: string;
+  payload: JsonValue;
+};
+
+export type ListPendingWorkflowSignalsInput = {
+  tenantId: string;
+  workspaceId: string;
+  workflowId: string;
+  limit?: number;
+};
+
+export type WorkflowRuntimeSnapshotRecord = {
+  tenantId: string;
+  workspaceId: string;
+  workflowId: string;
+  payload: JsonValue;
+  updatedAt: string;
 };

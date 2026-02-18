@@ -1,6 +1,7 @@
 import {
   Agent,
   DashboardMetrics,
+  EnqueueWorkflowSignalInput,
   MessagingChannelType,
   ObservabilityStore,
   Run,
@@ -81,6 +82,23 @@ export type TenantMessagingSettingsInput = {
   };
 };
 
+export type IngestSlackThreadReplyInput = {
+  providerTeamId: string;
+  eventId: string;
+  eventTs: string;
+  channelId: string;
+  threadId: string;
+  messageId: string;
+  userId: string;
+  message: string;
+};
+
+export type IngestSlackThreadReplyResult =
+  | { status: "duplicate" }
+  | { status: "unmapped" }
+  | { status: "not_waiting"; workflowId: string; runId: string }
+  | { status: "queued_signal"; workflowId: string; runId: string; signalId: string; jobId: string };
+
 function isWithinLast24Hours(isoDate: string) {
   const now = Date.now();
   const started = new Date(isoDate).getTime();
@@ -109,6 +127,14 @@ function assertNonEmpty(value: unknown, field: string): asserts value is string 
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${field} must be a non-empty string`);
   }
+}
+
+function extractObjectivePromptFromQueuedEvent(events: RunEvent[]): string | undefined {
+  const queued = events.find((event) => event.message === "Run queued");
+  const objectivePrompt = queued?.payload?.objective_prompt;
+  return typeof objectivePrompt === "string" && objectivePrompt.trim().length > 0
+    ? objectivePrompt
+    : undefined;
 }
 
 export function createDashboardService(store: ObservabilityStore) {
@@ -218,6 +244,10 @@ export function createDashboardService(store: ObservabilityStore) {
       const owner = input.owner || "unknown"; // Or maybe get from auth context if available
       const env = input.env || "prod";
       const version = input.version || "1.0.0";
+      const normalizedSystemPrompt =
+        typeof input.systemPrompt === "string" && input.systemPrompt.trim().length > 0
+          ? input.systemPrompt.trim()
+          : undefined;
       
       const now = new Date().toISOString();
       const agent: Agent = {
@@ -230,7 +260,7 @@ export function createDashboardService(store: ObservabilityStore) {
         lastHeartbeatAt: now,
         errorRate: 0,
         avgLatencyMs: 0,
-        systemPrompt: input.systemPrompt,
+        systemPrompt: normalizedSystemPrompt,
         enabledTools: input.enabledTools
       };
       await store.upsertAgent(agent);
@@ -268,6 +298,137 @@ export function createDashboardService(store: ObservabilityStore) {
         throw new Error("Unable to read tenant messaging settings after update");
       }
       return resolved;
+    },
+
+    async ingestSlackThreadReply(input: IngestSlackThreadReplyInput): Promise<IngestSlackThreadReplyResult> {
+      assertNonEmpty(input.providerTeamId, "providerTeamId");
+      assertNonEmpty(input.eventId, "eventId");
+      assertNonEmpty(input.eventTs, "eventTs");
+      assertNonEmpty(input.channelId, "channelId");
+      assertNonEmpty(input.threadId, "threadId");
+      assertNonEmpty(input.messageId, "messageId");
+      assertNonEmpty(input.userId, "userId");
+      assertNonEmpty(input.message, "message");
+
+      const mapping = await store.getWorkflowMessageThreadByProviderThread({
+        channelType: "slack",
+        channelId: input.channelId,
+        threadId: input.threadId,
+        providerTeamId: input.providerTeamId
+      });
+      if (!mapping) {
+        return { status: "unmapped" };
+      }
+
+      const accepted = await store.recordInboundMessageReceipt({
+        provider: "slack",
+        providerTeamId: input.providerTeamId,
+        eventId: input.eventId,
+        tenantId: mapping.tenantId,
+        workspaceId: mapping.workspaceId
+      });
+      if (!accepted) {
+        return { status: "duplicate" };
+      }
+
+      const run = await store.getRun(mapping.runId);
+      if (!run || run.status !== "queued") {
+        await store.appendRunEvent({
+          id: uuidv7(),
+          runId: mapping.runId,
+          ts: new Date().toISOString(),
+          type: "state",
+          level: "warn",
+          message: "Slack reply ignored because workflow is not waiting",
+          payload: {
+            workflowId: mapping.workflowId,
+            channelId: input.channelId,
+            threadId: input.threadId,
+            messageId: input.messageId
+          },
+          tenantId: mapping.tenantId,
+          workspaceId: mapping.workspaceId,
+          correlationId: mapping.runId,
+          causationId: input.eventId
+        });
+        return { status: "not_waiting", workflowId: mapping.workflowId, runId: mapping.runId };
+      }
+
+      const signalId = uuidv7();
+      const signalOccurredAt = new Date(Number.parseFloat(input.eventTs) * 1000);
+      const occurredAt = Number.isFinite(signalOccurredAt.getTime())
+        ? signalOccurredAt.toISOString()
+        : new Date().toISOString();
+      const signalPayload = {
+        message: input.message,
+        provider: {
+          channelId: input.channelId,
+          userId: input.userId,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          eventId: input.eventId,
+          providerTeamId: input.providerTeamId
+        }
+      } satisfies Record<string, unknown>;
+
+      const signalInput: EnqueueWorkflowSignalInput = {
+        signalId,
+        tenantId: mapping.tenantId,
+        workspaceId: mapping.workspaceId,
+        workflowId: mapping.workflowId,
+        runId: mapping.runId,
+        signalType: "user_input_signal",
+        occurredAt,
+        payload: signalPayload
+      };
+      await store.enqueueWorkflowSignal(signalInput);
+
+      await store.appendRunEvent({
+        id: uuidv7(),
+        runId: mapping.runId,
+        ts: new Date().toISOString(),
+        type: "state",
+        level: "info",
+        message: "Inbound user input signal queued",
+        payload: {
+          signalId,
+          workflowId: mapping.workflowId,
+          channelId: input.channelId,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          eventId: input.eventId
+        },
+        tenantId: mapping.tenantId,
+        workspaceId: mapping.workspaceId,
+        correlationId: mapping.runId,
+        causationId: input.eventId
+      });
+
+      const existingEvents = await store.listRunEvents(mapping.runId);
+      const objectivePrompt =
+        extractObjectivePromptFromQueuedEvent(existingEvents) ??
+        "Continue workflow from pending user input signal.";
+      const job = await store.enqueueWorkflowJob({
+        id: `job_${uuidv7()}`,
+        runId: mapping.runId,
+        agentId: run.agentId,
+        tenantId: mapping.tenantId,
+        workspaceId: mapping.workspaceId,
+        workflowId: mapping.workflowId,
+        requestId: `req_signal_${signalId}`,
+        threadId: mapping.threadId,
+        objectivePrompt,
+        maxAttempts: 3,
+        availableAt: new Date().toISOString()
+      });
+
+      return {
+        status: "queued_signal",
+        workflowId: mapping.workflowId,
+        runId: mapping.runId,
+        signalId,
+        jobId: job.id
+      };
     },
 
     async getRun(id: string, scope?: TenantWorkspaceScope) {
@@ -508,3 +669,4 @@ export const getMetrics = dashboardService.getMetrics.bind(dashboardService);
 export const createAgentAndRun = dashboardService.createAgentAndRun.bind(dashboardService);
 export const getTenantMessagingSettings = dashboardService.getTenantMessagingSettings.bind(dashboardService);
 export const upsertTenantMessagingSettings = dashboardService.upsertTenantMessagingSettings.bind(dashboardService);
+export const ingestSlackThreadReply = dashboardService.ingestSlackThreadReply.bind(dashboardService);
