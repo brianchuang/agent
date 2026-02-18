@@ -1,10 +1,12 @@
 import {
   Agent,
   DashboardMetrics,
+  MessagingChannelType,
   ObservabilityStore,
   Run,
   RunEvent,
   RunsFilter,
+  UpsertTenantMessagingSettingsInput,
   WorkflowQueueJob,
   getObservabilityStore
 } from "@agent/observability";
@@ -67,6 +69,16 @@ export type CreateAgentAndRunInput = CreateAgentInput & {
   tenantId?: string;
   workspaceId?: string;
   threadId?: string;
+};
+
+export type TenantMessagingSettingsInput = {
+  tenantId: string;
+  workspaceId?: string;
+  notifierCascade?: MessagingChannelType[];
+  slack?: {
+    enabled?: boolean;
+    defaultChannel?: string;
+  };
 };
 
 function isWithinLast24Hours(isoDate: string) {
@@ -233,6 +245,29 @@ export function createDashboardService(store: ObservabilityStore) {
         return runs;
       }
       return runs.filter((run) => runIdSet.has(run.id));
+    },
+
+    async getTenantMessagingSettings(tenantId: string, workspaceId: string) {
+      assertNonEmpty(tenantId, "tenantId");
+      assertNonEmpty(workspaceId, "workspaceId");
+      return store.getTenantMessagingSettings(tenantId, workspaceId);
+    },
+
+    async upsertTenantMessagingSettings(input: TenantMessagingSettingsInput) {
+      assertNonEmpty(input.tenantId, "tenantId");
+      const payload: UpsertTenantMessagingSettingsInput = {
+        tenantId: input.tenantId,
+        workspaceId: input.workspaceId,
+        notifierCascade: input.notifierCascade,
+        slack: input.slack
+      };
+      await store.upsertTenantMessagingSettings(payload);
+      const resolvedWorkspace = input.workspaceId ?? "default";
+      const resolved = await store.getTenantMessagingSettings(input.tenantId, resolvedWorkspace);
+      if (!resolved) {
+        throw new Error("Unable to read tenant messaging settings after update");
+      }
+      return resolved;
     },
 
     async getRun(id: string, scope?: TenantWorkspaceScope) {
@@ -471,3 +506,5 @@ export const listIncidents = dashboardService.listIncidents.bind(dashboardServic
 export const listAgentRuns = dashboardService.listAgentRuns.bind(dashboardService);
 export const getMetrics = dashboardService.getMetrics.bind(dashboardService);
 export const createAgentAndRun = dashboardService.createAgentAndRun.bind(dashboardService);
+export const getTenantMessagingSettings = dashboardService.getTenantMessagingSettings.bind(dashboardService);
+export const upsertTenantMessagingSettings = dashboardService.upsertTenantMessagingSettings.bind(dashboardService);
