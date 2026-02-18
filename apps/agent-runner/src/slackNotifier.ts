@@ -11,7 +11,7 @@ type TenantMessagingStore = Pick<
 >;
 
 type SlackNotifierConfig = {
-  botToken: string;
+  botToken?: string;
   defaultChannel?: string;
   channelByScope: Record<string, string>;
   dashboardBaseUrl?: string;
@@ -49,12 +49,12 @@ function normalizeBaseUrl(raw: string | undefined): string | undefined {
 }
 
 function parseNotifierCascade(raw: string | undefined): MessagingChannelType[] {
-  if (!raw || raw.trim().length === 0) return ["slack"];
+  if (!raw || raw.trim().length === 0) return ["web_ui", "slack"];
   const values = raw
     .split(",")
     .map((value) => value.trim())
-    .filter((value): value is MessagingChannelType => value === "slack");
-  return values.length > 0 ? values : ["slack"];
+    .filter((value): value is MessagingChannelType => value === "web_ui" || value === "slack");
+  return values.length > 0 ? values : ["web_ui", "slack"];
 }
 
 function fallbackChannelFor(input: WaitingSignalNotification, config: SlackNotifierConfig): string {
@@ -91,6 +91,10 @@ async function postToSlack(
   threadId: string;
   providerTeamId?: string;
 }> {
+  if (!config.botToken || config.botToken.trim().length === 0) {
+    throw new Error("Slack notifier requires SLACK_BOT_TOKEN");
+  }
+
   const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
@@ -196,29 +200,64 @@ export function createSlackWaitingSignalNotifier(input: {
         waitingInput.workspaceId
       );
 
-      const cascade =
+      const configuredCascade =
         tenantSettings?.notifierCascade && tenantSettings.notifierCascade.length > 0
           ? tenantSettings.notifierCascade
           : input.config.fallbackCascade;
+      const cascade = configuredCascade.includes("web_ui")
+        ? configuredCascade
+        : [...configuredCascade, "web_ui"];
+      let lastError: Error | undefined;
 
       for (const notifierType of cascade) {
+        if (notifierType === "web_ui") {
+          await input.store.upsertWorkflowMessageThread({
+            tenantId: waitingInput.tenantId,
+            workspaceId: waitingInput.workspaceId,
+            workflowId: waitingInput.workflowId,
+            runId: waitingInput.runId,
+            channelType: "web_ui",
+            channelId: `${waitingInput.tenantId}:${waitingInput.workspaceId}`,
+            rootMessageId: waitingInput.runId,
+            threadId: waitingInput.threadId,
+            status: "active"
+          });
+          return {
+            channel: "web_ui",
+            target: `${waitingInput.tenantId}/${waitingInput.workspaceId}`,
+            channelId: waitingInput.workspaceId,
+            messageId: waitingInput.runId,
+            threadId: waitingInput.threadId
+          };
+        }
+
         if (notifierType !== "slack") continue;
+
         const channel = resolveSlackChannel(waitingInput, input.config, tenantSettings);
         if (!channel) continue;
-        const result = await postToSlack(waitingInput, input.config, channel);
-        await input.store.upsertWorkflowMessageThread({
-          tenantId: waitingInput.tenantId,
-          workspaceId: waitingInput.workspaceId,
-          workflowId: waitingInput.workflowId,
-          runId: waitingInput.runId,
-          channelType: "slack",
-          channelId: result.channelId,
-          rootMessageId: result.messageId,
-          threadId: result.threadId,
-          providerTeamId: result.providerTeamId,
-          status: "active"
-        });
-        return result;
+
+        try {
+          const result = await postToSlack(waitingInput, input.config, channel);
+          await input.store.upsertWorkflowMessageThread({
+            tenantId: waitingInput.tenantId,
+            workspaceId: waitingInput.workspaceId,
+            workflowId: waitingInput.workflowId,
+            runId: waitingInput.runId,
+            channelType: "slack",
+            channelId: result.channelId,
+            rootMessageId: result.messageId,
+            threadId: result.threadId,
+            providerTeamId: result.providerTeamId,
+            status: "active"
+          });
+          return result;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+
+      if (lastError) {
+        throw lastError;
       }
 
       throw new Error(
@@ -231,18 +270,19 @@ export function createSlackWaitingSignalNotifier(input: {
 export function createSlackWaitingSignalNotifierFromEnv(
   store: TenantMessagingStore
 ): WaitingSignalNotifier | undefined {
-  if (process.env.WAITING_SIGNAL_NOTIFIER !== "slack") {
+  const notifier = process.env.WAITING_SIGNAL_NOTIFIER?.trim();
+  if (notifier && notifier !== "slack" && notifier !== "web_ui") {
     return undefined;
   }
   const botToken = process.env.SLACK_BOT_TOKEN;
-  if (!botToken || botToken.trim().length === 0) {
+  if (notifier === "slack" && (!botToken || botToken.trim().length === 0)) {
     throw new Error("WAITING_SIGNAL_NOTIFIER=slack requires SLACK_BOT_TOKEN");
   }
 
   return createSlackWaitingSignalNotifier({
     store,
     config: {
-      botToken: botToken.trim(),
+      botToken: botToken?.trim(),
       defaultChannel: process.env.SLACK_DEFAULT_CHANNEL?.trim(),
       channelByScope: parseScopeChannels(process.env.SLACK_CHANNEL_BY_SCOPE_JSON),
       dashboardBaseUrl: normalizeBaseUrl(process.env.AGENT_DASHBOARD_BASE_URL),
