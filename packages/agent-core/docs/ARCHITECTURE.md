@@ -48,6 +48,21 @@ flowchart TD
 7. Step outcomes, audit records, and workflow status are committed transactionally.
 8. Workflow continues, completes, fails, or pauses for a signal and later resumes.
 
+## Implementation Notes (Current Worker)
+
+In this repo, `apps/agent-runner` adds deployment-level runtime patterns on top of the core contracts:
+
+- Hierarchical memory strategy:
+  - short-term working set in planner prompt (bounded recent steps),
+  - long-term durable memory persisted/retrieved via tools.
+- Memory tools exposed to planner:
+  - `memory_write` for durable facts,
+  - `memory_search` for long-term retrieval.
+- Token observability:
+  - planner logs estimated input token usage before each LLM call.
+- LLM resiliency:
+  - provider/model failover chain and strict tool allow-list checks before execution.
+
 ## Storage Strategy
 
 - Canonical history: append-only `run_events`.

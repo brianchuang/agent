@@ -36,14 +36,31 @@ Detailed architecture and system diagram: `packages/agent-core/docs/ARCHITECTURE
 - Start Postgres (Docker): `npm run db:up`
 - Apply migrations: `npm run db:migrate`
 - Run the workspace in development: `npm run dev`
-- Start local queue worker (dashboard process): `npm run worker --workspace dashboard`
-- Process one batch once: `npm run worker:once --workspace dashboard`
+- Start local queue worker (`agent-runner`): `npm run worker`
+- Process one batch once (`agent-runner`): `npm run worker:once`
 
 Database URL resolution order:
 
 1. `AGENT_DATABASE_URL`
 2. `DATABASE_URL`
 3. Default local DSN `postgres://agent:agent@127.0.0.1:55432/agent_observability`
+
+## Agent Runner Notes
+
+`apps/agent-runner` executes queued workflow jobs. Current planner behavior is:
+
+- Provider-agnostic OpenAI-compatible LLM call layer (AI SDK).
+- Multi-provider/model failover chain (`LLM_*`, `GROQ_*`, `OPENAI_*`, `OPENROUTER_*` envs).
+- Strict planner-intent validation (`tool_call`, `ask_user`, `complete`) and tool allow-listing.
+- Hierarchical memory:
+  - Short-term: bounded recent step window in prompt.
+  - Long-term: durable memory facts persisted to run events and retrieved by relevance.
+  - Memory tools: `memory_write`, `memory_search`.
+
+Runner reliability protections:
+
+- Per-job execution timeout in queue runner.
+- Failed executions mark runs as `failed` with `errorSummary`/`endedAt`.
 
 ## Open Source Workflow
 

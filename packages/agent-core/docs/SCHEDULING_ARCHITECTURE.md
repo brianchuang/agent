@@ -40,3 +40,10 @@ Returns scheduled workflow/request IDs and resolved `availableAt`.
 - Scheduled runs are visible as normal runs with queue and state events.
 - Existing lease and retry logic applies unchanged.
 - No separate cron daemon is required beyond the existing queue worker loop.
+- Queue runner should enforce per-job execution timeouts and mark failed runs terminally
+  (`status=failed` with error summary) to avoid stuck `running` runs.
+
+## Planner Context Guidance
+- Keep short-term planner context bounded by token budget.
+- Store durable scheduling/user facts in long-term memory and retrieve on demand.
+- Avoid replaying full historical step logs into every planning call.

@@ -56,6 +56,8 @@ type ChatMessage = {
   content: string;
 };
 
+const SHORT_RATE_LIMIT_RETRY_MS = Number.parseInt(process.env.SHORT_RATE_LIMIT_RETRY_MS ?? "3000", 10);
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -121,6 +123,43 @@ function isRetryableRateLimitError(error: unknown): boolean {
   );
 }
 
+function isGroqApiBaseUrl(url: string): boolean {
+  return /(^https?:\/\/)?api\.groq\.com/i.test(url.trim());
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractRetryAfterMs(message: string): number | null {
+  const retryAfterMatch = message.match(/retry-after[^0-9]*([0-9]+(?:\.[0-9]+)?)/i);
+  if (retryAfterMatch) {
+    const seconds = Number.parseFloat(retryAfterMatch[1] ?? "");
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.round(seconds * 1000);
+    }
+  }
+
+  const minSecMatch = message.match(/try again in\s*([0-9]+)m([0-9]+(?:\.[0-9]+)?)s/i);
+  if (minSecMatch) {
+    const minutes = Number.parseInt(minSecMatch[1] ?? "", 10);
+    const seconds = Number.parseFloat(minSecMatch[2] ?? "");
+    if (Number.isFinite(minutes) && Number.isFinite(seconds) && minutes >= 0 && seconds >= 0) {
+      return Math.round((minutes * 60 + seconds) * 1000);
+    }
+  }
+
+  const secMatch = message.match(/try again in\s*([0-9]+(?:\.[0-9]+)?)s/i);
+  if (secMatch) {
+    const seconds = Number.parseFloat(secMatch[1] ?? "");
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.round(seconds * 1000);
+    }
+  }
+
+  return null;
+}
+
 function buildProviderChain(): LlmProviderConfig[] {
   const temp = Number.isFinite(DEFAULT_LLM_TEMPERATURE) ? DEFAULT_LLM_TEMPERATURE : 0.1;
   const providers: LlmProviderConfig[] = [];
@@ -170,12 +209,22 @@ function buildProviderChain(): LlmProviderConfig[] {
   }
 
   const deduped: LlmProviderConfig[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   for (const provider of providers) {
-    const key = `${provider.providerId}:${provider.apiBaseUrl}:${provider.apiKey}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(provider);
+    const key = `${provider.apiBaseUrl}:${provider.apiKey}`;
+    const existingIndex = seen.get(key);
+    if (existingIndex === undefined) {
+      seen.set(key, deduped.length);
+      deduped.push(provider);
+      continue;
+    }
+
+    const existing = deduped[existingIndex];
+    const mergedModels = [...existing.models];
+    for (const model of provider.models) {
+      if (!mergedModels.includes(model)) mergedModels.push(model);
+    }
+    deduped[existingIndex] = { ...existing, models: mergedModels };
   }
 
   return deduped;
@@ -273,6 +322,7 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
         );
         const droppedSteps = Math.max(0, input.prior_step_summaries.length - recentSteps.length);
         const allowedTools = new Set(input.available_tools.map((tool) => tool.name));
+        const allowedToolNames = Array.from(allowedTools).join(", ");
         const availableTools = input.available_tools
           .map((tool) => `- ${tool.name}${tool.description ? `: ${tool.description}` : ""}`)
           .join("\n");
@@ -314,6 +364,13 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
         );
 
         const attemptErrors: string[] = [];
+        const deferredGroqFallbacks: Array<{ provider: LlmProviderConfig; model: string; cause: string }> = [];
+        const deferredGroqSeen = new Set<string>();
+        const shortRetryMs =
+          Number.isFinite(SHORT_RATE_LIMIT_RETRY_MS) && SHORT_RATE_LIMIT_RETRY_MS >= 0
+            ? SHORT_RATE_LIMIT_RETRY_MS
+            : 3000;
+
         for (const provider of llmProviders) {
           for (const model of provider.models) {
             try {
@@ -322,11 +379,11 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
                 apiBaseUrl: provider.apiBaseUrl,
                 model,
                 temperature: provider.temperature,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: plannerPrompt }
-            ]
-          });
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: plannerPrompt }
+                ]
+              });
 
               const parsedIntent = parsePlannerIntent(content);
               if (parsedIntent) {
@@ -334,6 +391,49 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
                   attemptErrors.push(
                     `[${provider.providerId}/${model}] unknown_tool: ${parsedIntent.toolName}`
                   );
+                  try {
+                    const repairPrompt = [
+                      plannerPrompt,
+                      "",
+                      `Previous model output (invalid because of unavailable tool "${parsedIntent.toolName}")`,
+                      stripCodeFences(content),
+                      "",
+                      `Return only JSON and use only these tools: ${allowedToolNames || "(none)"}.`
+                    ].join("\n");
+                    const repairContent = await callChatCompletions({
+                      apiKey: provider.apiKey,
+                      apiBaseUrl: provider.apiBaseUrl,
+                      model,
+                      temperature: provider.temperature,
+                      messages: [
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: repairPrompt }
+                      ]
+                    });
+                    const repairedIntent = parsePlannerIntent(repairContent);
+                    if (repairedIntent) {
+                      if (
+                        repairedIntent.type === "tool_call" &&
+                        !allowedTools.has(repairedIntent.toolName)
+                      ) {
+                        attemptErrors.push(
+                          `[${provider.providerId}/${model}] unknown_tool_after_repair: ${repairedIntent.toolName}`
+                        );
+                      } else {
+                        return repairedIntent;
+                      }
+                    } else {
+                      attemptErrors.push(
+                        `[${provider.providerId}/${model}] invalid_planner_json_after_repair: ${stripCodeFences(repairContent).slice(0, 240)}`
+                      );
+                    }
+                  } catch (repairError) {
+                    const repairMessage =
+                      repairError instanceof Error ? repairError.message : String(repairError);
+                    attemptErrors.push(
+                      `[${provider.providerId}/${model}] repair_failed: ${repairMessage}`
+                    );
+                  }
                   continue;
                 }
                 return parsedIntent;
@@ -348,7 +448,103 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
               if (!isRetryableRateLimitError(error)) {
                 break;
               }
+
+              const retryAfterMs = extractRetryAfterMs(message);
+              if (retryAfterMs !== null && retryAfterMs > 0 && retryAfterMs <= shortRetryMs) {
+                await sleep(retryAfterMs);
+                continue;
+              }
+
+              // On Groq rate limits, prefer shifting to non-Groq providers first, then try smaller Groq models.
+              if (isGroqApiBaseUrl(provider.apiBaseUrl)) {
+                const currentIndex = provider.models.indexOf(model);
+                for (const fallbackModel of provider.models.slice(currentIndex + 1)) {
+                  const fallbackKey = `${provider.providerId}:${provider.apiBaseUrl}:${fallbackModel}`;
+                  if (deferredGroqSeen.has(fallbackKey)) continue;
+                  deferredGroqSeen.add(fallbackKey);
+                  deferredGroqFallbacks.push({
+                    provider,
+                    model: fallbackModel,
+                    cause: `[${provider.providerId}/${model}] rate_limited`
+                  });
+                }
+              }
+              break;
             }
+          }
+        }
+
+        for (const fallback of deferredGroqFallbacks) {
+          try {
+            const content = await callChatCompletions({
+              apiKey: fallback.provider.apiKey,
+              apiBaseUrl: fallback.provider.apiBaseUrl,
+              model: fallback.model,
+              temperature: fallback.provider.temperature,
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: plannerPrompt }
+              ]
+            });
+
+            const parsedIntent = parsePlannerIntent(content);
+            if (parsedIntent) {
+              if (parsedIntent.type === "tool_call" && !allowedTools.has(parsedIntent.toolName)) {
+                attemptErrors.push(
+                  `[${fallback.provider.providerId}/${fallback.model}] unknown_tool: ${parsedIntent.toolName}`
+                );
+                try {
+                  const repairPrompt = [
+                    plannerPrompt,
+                    "",
+                    `Previous model output (invalid because of unavailable tool "${parsedIntent.toolName}")`,
+                    stripCodeFences(content),
+                    "",
+                    `Return only JSON and use only these tools: ${allowedToolNames || "(none)"}.`
+                  ].join("\n");
+                  const repairContent = await callChatCompletions({
+                    apiKey: fallback.provider.apiKey,
+                    apiBaseUrl: fallback.provider.apiBaseUrl,
+                    model: fallback.model,
+                    temperature: fallback.provider.temperature,
+                    messages: [
+                      { role: "system", content: systemPrompt },
+                      { role: "user", content: repairPrompt }
+                    ]
+                  });
+                  const repairedIntent = parsePlannerIntent(repairContent);
+                  if (repairedIntent) {
+                    if (repairedIntent.type === "tool_call" && !allowedTools.has(repairedIntent.toolName)) {
+                      attemptErrors.push(
+                        `[${fallback.provider.providerId}/${fallback.model}] unknown_tool_after_repair: ${repairedIntent.toolName}`
+                      );
+                    } else {
+                      return repairedIntent;
+                    }
+                  } else {
+                    attemptErrors.push(
+                      `[${fallback.provider.providerId}/${fallback.model}] invalid_planner_json_after_repair: ${stripCodeFences(repairContent).slice(0, 240)}`
+                    );
+                  }
+                } catch (repairError) {
+                  const repairMessage = repairError instanceof Error ? repairError.message : String(repairError);
+                  attemptErrors.push(
+                    `[${fallback.provider.providerId}/${fallback.model}] repair_failed: ${repairMessage}`
+                  );
+                }
+                continue;
+              }
+              return parsedIntent;
+            }
+
+            attemptErrors.push(
+              `[${fallback.provider.providerId}/${fallback.model}] invalid_planner_json: ${stripCodeFences(content).slice(0, 240)}`
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            attemptErrors.push(
+              `[${fallback.provider.providerId}/${fallback.model}] ${fallback.cause}; ${message}`
+            );
           }
         }
 
