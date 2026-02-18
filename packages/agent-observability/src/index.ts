@@ -40,5 +40,13 @@ export type {
   MessagingChannelType,
   SlackChannelSettings,
   TenantMessagingSettings,
-  UpsertTenantMessagingSettingsInput
+  UpsertTenantMessagingSettingsInput,
+  WorkflowMessageThread,
+  UpsertWorkflowMessageThreadInput,
+  WorkflowMessageThreadLookupInput,
+  InboundMessageReceiptInput,
+  EnqueueWorkflowSignalInput,
+  WorkflowSignalInboxRecord,
+  ListPendingWorkflowSignalsInput,
+  WorkflowRuntimeSnapshotRecord
 } from "./types";

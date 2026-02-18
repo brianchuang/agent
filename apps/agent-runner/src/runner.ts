@@ -20,6 +20,7 @@ export type QueueRunnerDependencies = {
   execute: (job: WorkflowQueueJob) => Promise<Record<string, JsonValue>>;
   executeTimeoutMs?: number;
   notifier?: WaitingSignalNotifier;
+  logger?: (entry: Record<string, JsonValue>) => void;
 };
 
 export type QueueRunnerInput = ClaimWorkflowJobsInput;
@@ -43,7 +44,13 @@ export type WaitingSignalNotification = {
 export type WaitingSignalNotifier = {
   notifyWaitingSignal(
     input: WaitingSignalNotification
-  ): Promise<{ channel: string; target: string } | void>;
+  ): Promise<{
+    channel: string;
+    target: string;
+    channelId?: string;
+    messageId?: string;
+    threadId?: string;
+  } | void>;
 };
 
 function getOutputStatus(output: Record<string, JsonValue>): string | undefined {
@@ -94,17 +101,68 @@ function assertScope(input: QueueRunnerInput) {
   }
 }
 
+function summarizeJob(job: WorkflowQueueJob): Record<string, JsonValue> {
+  return {
+    jobId: job.id,
+    runId: job.runId,
+    workflowId: job.workflowId,
+    tenantId: job.tenantId,
+    workspaceId: job.workspaceId,
+    requestId: job.requestId,
+    threadId: job.threadId,
+    status: job.status,
+    attemptCount: job.attemptCount,
+    maxAttempts: job.maxAttempts,
+    availableAt: job.availableAt,
+    leaseToken: job.leaseToken,
+    leaseExpiresAt: job.leaseExpiresAt,
+    lastError: job.lastError
+  };
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function createQueueRunner(deps: QueueRunnerDependencies) {
+  const log =
+    deps.logger ??
+    ((entry: Record<string, JsonValue>) => {
+      console.log(JSON.stringify(entry));
+    });
+
   return {
     async runOnce(input: QueueRunnerInput): Promise<QueueRunnerResult> {
       assertScope(input);
       const executeTimeoutMs = deps.executeTimeoutMs ?? 120_000;
+      log({
+        component: "queue-runner",
+        event: "batch_start",
+        workerId: input.workerId,
+        limit: input.limit,
+        leaseMs: input.leaseMs,
+        tenantId: input.tenantId ?? null,
+        workspaceId: input.workspaceId ?? null
+      });
       const claimed = await deps.store.claimWorkflowJobs(input);
       let completed = 0;
       let failed = 0;
+      log({
+        component: "queue-runner",
+        event: "batch_claimed",
+        workerId: input.workerId,
+        claimed: claimed.length,
+        jobs: claimed.map((job) => summarizeJob(job))
+      });
 
       for (const job of claimed) {
         try {
+          log({
+            component: "queue-runner",
+            event: "job_execution_start",
+            workerId: input.workerId,
+            ...summarizeJob(job)
+          });
           const run = await deps.store.getRun(job.runId);
           if (run) {
             await deps.store.upsertRun({ ...run, status: "running" });
@@ -146,6 +204,14 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
 
           const finishedRun = await deps.store.getRun(job.runId);
           const outputStatus = getOutputStatus(output);
+          log({
+            component: "queue-runner",
+            event: "job_execution_completed",
+            workerId: input.workerId,
+            outputStatus: outputStatus ?? "success",
+            outputKeys: Object.keys(output),
+            ...summarizeJob(completedJob)
+          });
           if (finishedRun) {
             if (outputStatus === "waiting_signal") {
               await deps.store.upsertRun({
@@ -178,6 +244,9 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
                       payload: {
                         channel: notifyResult.channel,
                         target: notifyResult.target,
+                        channelId: notifyResult.channelId,
+                        messageId: notifyResult.messageId,
+                        threadId: notifyResult.threadId,
                         waitingQuestion
                       },
                       tenantId: job.tenantId,
@@ -188,6 +257,17 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
                   }
                 } catch (error) {
                   const notifyError = error instanceof Error ? error.message : String(error);
+                  const endedAt = new Date().toISOString();
+                  await deps.store.upsertRun({
+                    ...finishedRun,
+                    status: "failed",
+                    endedAt,
+                    errorSummary: `Waiting question delivery failed: ${notifyError}`,
+                    latencyMs: Math.max(
+                      0,
+                      new Date(endedAt).getTime() - new Date(finishedRun.startedAt).getTime()
+                    )
+                  });
                   await deps.store.appendRunEvent({
                     id: uuidv7(),
                     runId: job.runId,
@@ -239,7 +319,14 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
           completed += 1;
         } catch (error) {
           failed += 1;
-          const message = error instanceof Error ? error.message : String(error);
+          const message = toErrorMessage(error);
+          log({
+            component: "queue-runner",
+            event: "job_execution_error",
+            workerId: input.workerId,
+            error: message,
+            ...summarizeJob(job)
+          });
 
           await deps.store.failWorkflowJob({
             jobId: job.id,
@@ -248,6 +335,15 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
             retryAt: new Date(Date.now() + 5_000).toISOString()
           });
           const failedJob = await deps.store.getWorkflowJob(job.id);
+          if (failedJob) {
+            log({
+              component: "queue-runner",
+              event: "job_queue_state_after_fail",
+              workerId: input.workerId,
+              queueOutcome: failedJob.status,
+              ...summarizeJob(failedJob)
+            });
+          }
 
           const failedRun = await deps.store.getRun(job.runId);
           if (failedRun && failedJob) {
@@ -289,6 +385,14 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
         }
       }
 
+      log({
+        component: "queue-runner",
+        event: "batch_done",
+        workerId: input.workerId,
+        claimed: claimed.length,
+        completed,
+        failed
+      });
       return {
         claimed: claimed.length,
         completed,

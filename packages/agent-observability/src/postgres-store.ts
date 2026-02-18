@@ -22,7 +22,16 @@ import {
   User,
   TenantMessagingSettings,
   UpsertTenantMessagingSettingsInput,
-  MessagingChannelType
+  MessagingChannelType,
+  WorkflowMessageThread,
+  WorkflowMessageThreadLookupInput,
+  UpsertWorkflowMessageThreadInput,
+  InboundMessageReceiptInput,
+  EnqueueWorkflowSignalInput,
+  ListPendingWorkflowSignalsInput,
+  WorkflowSignalInboxRecord,
+  WorkflowSignalInboxStatus,
+  WorkflowRuntimeSnapshotRecord
 } from "./types";
 
 type AgentRow = {
@@ -94,6 +103,45 @@ type TenantMessagingSettingsRow = {
   notifier_cascade: MessagingChannelType[];
   slack_enabled: boolean;
   slack_default_channel: string | null;
+  updated_at: Date;
+};
+
+type WorkflowMessageThreadRow = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  workflow_id: string;
+  run_id: string;
+  channel_type: MessagingChannelType;
+  channel_id: string;
+  root_message_id: string;
+  thread_id: string;
+  provider_team_id: string | null;
+  status: "active" | "closed";
+  created_at: Date;
+  updated_at: Date;
+};
+
+type WorkflowSignalInboxRow = {
+  signal_id: string;
+  tenant_id: string;
+  workspace_id: string;
+  workflow_id: string;
+  run_id: string;
+  signal_type: "approval_signal" | "external_event_signal" | "timer_signal" | "user_input_signal";
+  occurred_at: Date;
+  payload: JsonValue;
+  status: WorkflowSignalInboxStatus;
+  consumed_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type WorkflowRuntimeSnapshotRow = {
+  tenant_id: string;
+  workspace_id: string;
+  workflow_id: string;
+  payload: JsonValue;
   updated_at: Date;
 };
 
@@ -177,6 +225,53 @@ function mapTenantMessagingSettings(row: TenantMessagingSettingsRow): TenantMess
       enabled: row.slack_enabled,
       defaultChannel: row.slack_default_channel ?? undefined
     },
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+function mapWorkflowMessageThread(row: WorkflowMessageThreadRow): WorkflowMessageThread {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    workflowId: row.workflow_id,
+    runId: row.run_id,
+    channelType: row.channel_type,
+    channelId: row.channel_id,
+    rootMessageId: row.root_message_id,
+    threadId: row.thread_id,
+    providerTeamId: row.provider_team_id ?? undefined,
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+function mapWorkflowSignalInboxRecord(row: WorkflowSignalInboxRow): WorkflowSignalInboxRecord {
+  return {
+    signalId: row.signal_id,
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    workflowId: row.workflow_id,
+    runId: row.run_id,
+    signalType: row.signal_type,
+    occurredAt: row.occurred_at.toISOString(),
+    payload: row.payload,
+    status: row.status,
+    consumedAt: row.consumed_at?.toISOString(),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+function mapWorkflowRuntimeSnapshotRecord(
+  row: WorkflowRuntimeSnapshotRow
+): WorkflowRuntimeSnapshotRecord {
+  return {
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    workflowId: row.workflow_id,
+    payload: row.payload,
     updatedAt: row.updated_at.toISOString()
   };
 }
@@ -637,6 +732,183 @@ export class PostgresObservabilityStore implements ObservabilityStore {
          updated_at = NOW()`,
       [input.tenantId, workspaceId, JSON.stringify(notifierCascade), slackEnabled, slackDefaultChannel]
     );
+  }
+
+  async upsertWorkflowMessageThread(
+    input: UpsertWorkflowMessageThreadInput
+  ): Promise<WorkflowMessageThread> {
+    const result = await this.pool.query<WorkflowMessageThreadRow>(
+      `INSERT INTO workflow_message_threads (
+          id,
+          tenant_id,
+          workspace_id,
+          workflow_id,
+          run_id,
+          channel_type,
+          channel_id,
+          root_message_id,
+          thread_id,
+          provider_team_id,
+          status
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (tenant_id, workspace_id, channel_type, channel_id, thread_id)
+       DO UPDATE SET
+         workflow_id = EXCLUDED.workflow_id,
+         run_id = EXCLUDED.run_id,
+         root_message_id = EXCLUDED.root_message_id,
+         provider_team_id = EXCLUDED.provider_team_id,
+         status = EXCLUDED.status,
+         updated_at = NOW()
+       RETURNING
+         id, tenant_id, workspace_id, workflow_id, run_id, channel_type, channel_id, root_message_id,
+         thread_id, provider_team_id, status, created_at, updated_at`,
+      [
+        uuidv7(),
+        input.tenantId,
+        input.workspaceId,
+        input.workflowId,
+        input.runId,
+        input.channelType,
+        input.channelId,
+        input.rootMessageId,
+        input.threadId,
+        input.providerTeamId ?? null,
+        input.status ?? "active"
+      ]
+    );
+    return mapWorkflowMessageThread(result.rows[0]);
+  }
+
+  async getWorkflowMessageThreadByProviderThread(
+    input: WorkflowMessageThreadLookupInput
+  ): Promise<WorkflowMessageThread | undefined> {
+    const values: string[] = [input.channelType, input.channelId, input.threadId];
+    const clauses = [
+      `channel_type = $1`,
+      `channel_id = $2`,
+      `thread_id = $3`,
+      `status = 'active'`
+    ];
+    if (input.providerTeamId && input.providerTeamId.trim().length > 0) {
+      values.push(input.providerTeamId);
+      clauses.push(`(provider_team_id = $${values.length} OR provider_team_id IS NULL)`);
+    }
+    const result = await this.pool.query<WorkflowMessageThreadRow>(
+      `SELECT
+          id, tenant_id, workspace_id, workflow_id, run_id, channel_type, channel_id, root_message_id,
+          thread_id, provider_team_id, status, created_at, updated_at
+         FROM workflow_message_threads
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      values
+    );
+    return result.rowCount ? mapWorkflowMessageThread(result.rows[0]) : undefined;
+  }
+
+  async recordInboundMessageReceipt(input: InboundMessageReceiptInput): Promise<boolean> {
+    const result = await this.pool.query<{ inserted: boolean }>(
+      `INSERT INTO inbound_message_receipts (
+         provider, provider_team_id, event_id, tenant_id, workspace_id
+       ) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (provider, provider_team_id, event_id)
+       DO NOTHING
+       RETURNING TRUE as inserted`,
+      [input.provider, input.providerTeamId, input.eventId, input.tenantId, input.workspaceId]
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async enqueueWorkflowSignal(input: EnqueueWorkflowSignalInput): Promise<WorkflowSignalInboxRecord> {
+    const result = await this.pool.query<WorkflowSignalInboxRow>(
+      `INSERT INTO workflow_signal_inbox (
+         signal_id, tenant_id, workspace_id, workflow_id, run_id, signal_type, occurred_at, payload, status
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::jsonb, 'pending')
+       ON CONFLICT (signal_id)
+       DO UPDATE SET
+         updated_at = NOW()
+       RETURNING
+         signal_id, tenant_id, workspace_id, workflow_id, run_id, signal_type, occurred_at,
+         payload, status, consumed_at, created_at, updated_at`,
+      [
+        input.signalId,
+        input.tenantId,
+        input.workspaceId,
+        input.workflowId,
+        input.runId,
+        input.signalType,
+        input.occurredAt,
+        JSON.stringify(input.payload)
+      ]
+    );
+    return mapWorkflowSignalInboxRecord(result.rows[0]);
+  }
+
+  async listPendingWorkflowSignals(
+    input: ListPendingWorkflowSignalsInput
+  ): Promise<WorkflowSignalInboxRecord[]> {
+    const limit = Number.isInteger(input.limit) && (input.limit as number) > 0 ? (input.limit as number) : 20;
+    const result = await this.pool.query<WorkflowSignalInboxRow>(
+      `SELECT
+          signal_id, tenant_id, workspace_id, workflow_id, run_id, signal_type, occurred_at,
+          payload, status, consumed_at, created_at, updated_at
+         FROM workflow_signal_inbox
+         WHERE tenant_id = $1
+           AND workspace_id = $2
+           AND workflow_id = $3
+           AND status = 'pending'
+         ORDER BY occurred_at ASC, created_at ASC
+         LIMIT $4`,
+      [input.tenantId, input.workspaceId, input.workflowId, limit]
+    );
+    return result.rows.map(mapWorkflowSignalInboxRecord);
+  }
+
+  async markWorkflowSignalConsumed(signalId: string, consumedAt: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE workflow_signal_inbox
+          SET status = 'consumed',
+              consumed_at = $2::timestamptz,
+              updated_at = NOW()
+        WHERE signal_id = $1`,
+      [signalId, consumedAt]
+    );
+  }
+
+  async getWorkflowRuntimeSnapshot(
+    tenantId: string,
+    workspaceId: string,
+    workflowId: string
+  ): Promise<WorkflowRuntimeSnapshotRecord | undefined> {
+    const result = await this.pool.query<WorkflowRuntimeSnapshotRow>(
+      `SELECT tenant_id, workspace_id, workflow_id, payload, updated_at
+         FROM workflow_runtime_snapshots
+         WHERE tenant_id = $1
+           AND workspace_id = $2
+           AND workflow_id = $3`,
+      [tenantId, workspaceId, workflowId]
+    );
+    return result.rowCount ? mapWorkflowRuntimeSnapshotRecord(result.rows[0]) : undefined;
+  }
+
+  async upsertWorkflowRuntimeSnapshot(input: {
+    tenantId: string;
+    workspaceId: string;
+    workflowId: string;
+    payload: JsonValue;
+  }): Promise<WorkflowRuntimeSnapshotRecord> {
+    const result = await this.pool.query<WorkflowRuntimeSnapshotRow>(
+      `INSERT INTO workflow_runtime_snapshots (
+         tenant_id, workspace_id, workflow_id, payload
+       ) VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (tenant_id, workspace_id, workflow_id)
+       DO UPDATE SET
+         payload = EXCLUDED.payload,
+         updated_at = NOW()
+       RETURNING tenant_id, workspace_id, workflow_id, payload, updated_at`,
+      [input.tenantId, input.workspaceId, input.workflowId, JSON.stringify(input.payload)]
+    );
+    return mapWorkflowRuntimeSnapshotRecord(result.rows[0]);
   }
 
   async upsertUser(input: UpsertUserInput): Promise<User> {

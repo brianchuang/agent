@@ -8,7 +8,9 @@ import {
   InMemoryAgentPersistence,
   ToolRegistry,
   PlannerInputV1,
-  PlannerIntent
+  PlannerIntent,
+  WorkflowSignalV1,
+  InMemoryPersistenceSnapshot
 } from "@agent/core";
 import type { JsonValue, WorkflowQueueJob, ObservabilityStore } from "@agent/observability";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -19,6 +21,7 @@ import {
   createMemoryWriteTool,
   loadLongTermMemorySnapshot
 } from "./memoryTools";
+import { buildEffectiveSystemPrompt } from "./promptComposition";
 
 export type QueueExecutionAdapter = {
   execute(job: WorkflowQueueJob): Promise<Record<string, JsonValue>>;
@@ -26,6 +29,11 @@ export type QueueExecutionAdapter = {
 
 type InlineAdapterDeps = {
   store: ObservabilityStore;
+};
+
+type RuntimeSlot = {
+  runtime: AgentRuntime;
+  persistence: InMemoryAgentPersistence;
 };
 
 const DEFAULT_LLM_API_BASE_URL =
@@ -257,16 +265,110 @@ async function callChatCompletions(input: {
   return text ?? "";
 }
 
+function isInMemorySnapshot(value: unknown): value is InMemoryPersistenceSnapshot {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+async function loadRuntimeSlot(
+  job: WorkflowQueueJob,
+  store: ObservabilityStore
+): Promise<RuntimeSlot> {
+  const existing = await store.getWorkflowRuntimeSnapshot(job.tenantId, job.workspaceId, job.workflowId);
+  const persistence =
+    existing && isInMemorySnapshot(existing.payload)
+      ? InMemoryAgentPersistence.fromSnapshot(existing.payload)
+      : new InMemoryAgentPersistence();
+  const runtime = new AgentRuntime(job.workspaceId, null, undefined, persistence);
+  return { runtime, persistence };
+}
+
+async function persistRuntimeSlot(
+  job: WorkflowQueueJob,
+  slot: RuntimeSlot,
+  store: ObservabilityStore
+): Promise<void> {
+  await store.upsertWorkflowRuntimeSnapshot({
+    tenantId: job.tenantId,
+    workspaceId: job.workspaceId,
+    workflowId: job.workflowId,
+    payload: slot.persistence.toSnapshot() as JsonValue
+  });
+}
+
+async function applyPendingWorkflowSignals(
+  job: WorkflowQueueJob,
+  slot: RuntimeSlot,
+  store: ObservabilityStore
+): Promise<void> {
+  const signals = await store.listPendingWorkflowSignals({
+    tenantId: job.tenantId,
+    workspaceId: job.workspaceId,
+    workflowId: job.workflowId,
+    limit: 25
+  });
+  for (const pending of signals) {
+    const signal: WorkflowSignalV1 = {
+      signalId: pending.signalId,
+      schemaVersion: "v1",
+      tenantId: pending.tenantId,
+      workspaceId: pending.workspaceId,
+      workflowId: pending.workflowId,
+      type: pending.signalType,
+      occurredAt: pending.occurredAt,
+      payload: pending.payload
+    };
+    try {
+      await slot.runtime.resumeWithSignal(signal);
+      await store.markWorkflowSignalConsumed(pending.signalId, new Date().toISOString());
+      await store.appendRunEvent({
+        id: uuidv7(),
+        runId: pending.runId,
+        ts: new Date().toISOString(),
+        type: "state",
+        level: "info",
+        message: "Workflow signal resumed",
+        payload: {
+          signalId: pending.signalId,
+          signalType: pending.signalType
+        },
+        tenantId: pending.tenantId,
+        workspaceId: pending.workspaceId,
+        correlationId: pending.runId,
+        causationId: pending.signalId
+      });
+    } catch (error) {
+      await store.appendRunEvent({
+        id: uuidv7(),
+        runId: pending.runId,
+        ts: new Date().toISOString(),
+        type: "state",
+        level: "warn",
+        message: "Workflow signal dropped",
+        payload: {
+          signalId: pending.signalId,
+          signalType: pending.signalType,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        tenantId: pending.tenantId,
+        workspaceId: pending.workspaceId,
+        correlationId: pending.runId,
+        causationId: pending.signalId
+      });
+      await store.markWorkflowSignalConsumed(pending.signalId, new Date().toISOString());
+    }
+  }
+}
+
 export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExecutionAdapter {
   return {
     async execute(job) {
       console.log(`[Worker] Executing job ${job.workflowId} for user ${job.tenantId}`);
       
       const agent = await deps.store.getAgent(job.agentId);
-      const systemPrompt = agent?.systemPrompt || "You are a helpful agent. You have access to a calendar tool 'calendar_list_events'. If the user asks about schedule/calendar, use it. Output ONLY valid JSON.";
-      
-      const persistence = new InMemoryAgentPersistence(); // In real app, use Postgres persistence
-      const runtime = new AgentRuntime(job.workspaceId, null, undefined, persistence);
+      const systemPrompt = buildEffectiveSystemPrompt(agent?.systemPrompt);
+      const runtimeSlot = await loadRuntimeSlot(job, deps.store);
+      const runtime = runtimeSlot.runtime;
+      await applyPendingWorkflowSignals(job, runtimeSlot, deps.store);
       
       // Initialize Tool Registry
       const toolRegistry = new ToolRegistry();
@@ -342,7 +444,8 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
           "- Prefer tool_call when a tool can make progress.",
           "- Use memory_search when you need additional historical facts not in the working set.",
           "- Use memory_write to persist durable facts that should help future runs.",
-          "- For deferred or recurring work, complete with an explicit execution plan and required follow-up timing.",
+          "- For deferred or recurring work, do not complete with only a conceptual plan.",
+          "- If recurring delivery details are missing (recipient, channel, cadence/timezone, or scope filters), use ask_user.",
           "- Use ask_user only when no available tool can make progress and user input is strictly required.",
           "- Use complete only when objective is done or cannot proceed safely.",
           "",
@@ -554,7 +657,7 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
               tenantId: job.tenantId, // Passed as userId to tools
               workspaceId: job.workspaceId,
               workflowId: job.workflowId,
-              threadId: job.workflowId, // Simple 1:1 mapping for now
+              threadId: job.threadId,
               occurredAt: new Date().toISOString(),
               objective_prompt: job.objectivePrompt
             },
@@ -578,6 +681,7 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
               }
             }
           );
+          await persistRuntimeSlot(job, runtimeSlot, deps.store);
 
           return {
             status: result.status,
@@ -590,6 +694,7 @@ export function createInlineExecutionAdapter(deps: InlineAdapterDeps): QueueExec
                   : "No completion output")) as any
           };
       } catch (error) {
+          await persistRuntimeSlot(job, runtimeSlot, deps.store);
           console.error("Agent Execution Failed:", error);
           throw error;
       }
