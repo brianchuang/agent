@@ -19,7 +19,10 @@ import {
   UpsertUserInput,
   UpsertConnectionInput,
   Connection,
-  User
+  User,
+  TenantMessagingSettings,
+  UpsertTenantMessagingSettingsInput,
+  MessagingChannelType
 } from "./types";
 
 type AgentRow = {
@@ -82,6 +85,15 @@ type WorkflowQueueJobRow = {
   lease_expires_at: Date | null;
   last_error: string | null;
   created_at: Date;
+  updated_at: Date;
+};
+
+type TenantMessagingSettingsRow = {
+  tenant_id: string;
+  workspace_id: string;
+  notifier_cascade: MessagingChannelType[];
+  slack_enabled: boolean;
+  slack_default_channel: string | null;
   updated_at: Date;
 };
 
@@ -152,6 +164,19 @@ function mapWorkflowQueueJob(row: WorkflowQueueJobRow): WorkflowQueueJob {
     leaseExpiresAt: row.lease_expires_at?.toISOString(),
     lastError: row.last_error ?? undefined,
     createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+function mapTenantMessagingSettings(row: TenantMessagingSettingsRow): TenantMessagingSettings {
+  return {
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id === "*" ? undefined : row.workspace_id,
+    notifierCascade: row.notifier_cascade,
+    slack: {
+      enabled: row.slack_enabled,
+      defaultChannel: row.slack_default_channel ?? undefined
+    },
     updatedAt: row.updated_at.toISOString()
   };
 }
@@ -577,6 +602,41 @@ export class PostgresObservabilityStore implements ObservabilityStore {
       [jobId]
     );
     return result.rowCount ? mapWorkflowQueueJob(result.rows[0]) : undefined;
+  }
+
+  async getTenantMessagingSettings(
+    tenantId: string,
+    workspaceId: string
+  ): Promise<TenantMessagingSettings | undefined> {
+    const result = await this.pool.query<TenantMessagingSettingsRow>(
+      `SELECT tenant_id, workspace_id, notifier_cascade, slack_enabled, slack_default_channel, updated_at
+         FROM tenant_messaging_settings
+         WHERE tenant_id = $1
+           AND workspace_id IN ($2, '*')
+         ORDER BY CASE WHEN workspace_id = $2 THEN 0 ELSE 1 END
+         LIMIT 1`,
+      [tenantId, workspaceId]
+    );
+    return result.rowCount ? mapTenantMessagingSettings(result.rows[0]) : undefined;
+  }
+
+  async upsertTenantMessagingSettings(input: UpsertTenantMessagingSettingsInput): Promise<void> {
+    const workspaceId = input.workspaceId && input.workspaceId.trim().length > 0 ? input.workspaceId : "*";
+    const notifierCascade = input.notifierCascade ?? ["slack"];
+    const slackEnabled = input.slack?.enabled ?? false;
+    const slackDefaultChannel = input.slack?.defaultChannel ?? null;
+    await this.pool.query(
+      `INSERT INTO tenant_messaging_settings (
+         tenant_id, workspace_id, notifier_cascade, slack_enabled, slack_default_channel
+       ) VALUES ($1, $2, $3::jsonb, $4, $5)
+       ON CONFLICT (tenant_id, workspace_id)
+       DO UPDATE SET
+         notifier_cascade = EXCLUDED.notifier_cascade,
+         slack_enabled = EXCLUDED.slack_enabled,
+         slack_default_channel = EXCLUDED.slack_default_channel,
+         updated_at = NOW()`,
+      [input.tenantId, workspaceId, JSON.stringify(notifierCascade), slackEnabled, slackDefaultChannel]
+    );
   }
 
   async upsertUser(input: UpsertUserInput): Promise<User> {

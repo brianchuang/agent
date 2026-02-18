@@ -38,3 +38,27 @@ Memory tools:
 
 - Job execution timeout in queue runner (`executeTimeoutMs`, default `120000`)
 - Failed executions mark run status as `failed` and persist error summary
+
+## Waiting-Signal Notifications
+
+When a workflow pauses in `waiting_signal`, the worker can escalate the question via tenant messaging settings.
+Current channel support: Slack.
+
+Environment variables:
+
+- `WAITING_SIGNAL_NOTIFIER=slack`
+- `SLACK_BOT_TOKEN` (bot token with `chat:write`)
+- Optional fallback only: `SLACK_DEFAULT_CHANNEL` (fallback channel ID, e.g. `C123...`)
+- Optional fallback only: `SLACK_CHANNEL_BY_SCOPE_JSON` to route by tenant/workspace.
+  - Format: `{"tenantId:workspaceId":"C123..."}`.
+- Optional fallback channel order: `WAITING_SIGNAL_NOTIFIER_CASCADE` (comma-separated, currently `slack` only).
+- Optional: `AGENT_DASHBOARD_BASE_URL` to include a run link in the Slack message.
+
+Tenant settings are stored in `tenant_messaging_settings`:
+- Workspace override row: `(tenant_id, workspace_id)`
+- Tenant default row: `(tenant_id, '*')`
+
+Resolution order:
+1. Workspace-level settings
+2. Tenant-level default settings
+3. Env fallback channel mapping

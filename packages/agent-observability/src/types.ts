@@ -154,6 +154,11 @@ export interface ObservabilityStore {
   completeWorkflowJob(input: CompleteWorkflowJobInput): Promise<void>;
   failWorkflowJob(input: FailWorkflowJobInput): Promise<void>;
   getWorkflowJob(jobId: string): Promise<WorkflowQueueJob | undefined>;
+  getTenantMessagingSettings(
+    tenantId: string,
+    workspaceId: string
+  ): Promise<TenantMessagingSettings | undefined>;
+  upsertTenantMessagingSettings(input: UpsertTenantMessagingSettingsInput): Promise<void>;
 
   // Auth & Connections
   upsertUser(input: UpsertUserInput): Promise<User>;
@@ -201,4 +206,26 @@ export type UpsertConnectionInput = {
   expiresAt?: number;
   scope?: string;
   tokenType?: string;
+};
+
+export type MessagingChannelType = "slack";
+
+export type SlackChannelSettings = {
+  enabled?: boolean;
+  defaultChannel?: string;
+};
+
+export type TenantMessagingSettings = {
+  tenantId: string;
+  workspaceId?: string;
+  notifierCascade: MessagingChannelType[];
+  slack?: SlackChannelSettings;
+  updatedAt?: string;
+};
+
+export type UpsertTenantMessagingSettingsInput = {
+  tenantId: string;
+  workspaceId?: string;
+  notifierCascade?: MessagingChannelType[];
+  slack?: SlackChannelSettings;
 };

@@ -19,6 +19,7 @@ export type QueueRunnerDependencies = {
   >;
   execute: (job: WorkflowQueueJob) => Promise<Record<string, JsonValue>>;
   executeTimeoutMs?: number;
+  notifier?: WaitingSignalNotifier;
 };
 
 export type QueueRunnerInput = ClaimWorkflowJobsInput;
@@ -28,6 +29,41 @@ export type QueueRunnerResult = {
   completed: number;
   failed: number;
 };
+
+export type WaitingSignalNotification = {
+  runId: string;
+  jobId: string;
+  workflowId: string;
+  threadId: string;
+  tenantId: string;
+  workspaceId: string;
+  waitingQuestion: string;
+};
+
+export type WaitingSignalNotifier = {
+  notifyWaitingSignal(
+    input: WaitingSignalNotification
+  ): Promise<{ channel: string; target: string } | void>;
+};
+
+function getOutputStatus(output: Record<string, JsonValue>): string | undefined {
+  const raw = output.status;
+  return typeof raw === "string" ? raw : undefined;
+}
+
+function getWaitingQuestion(output: Record<string, JsonValue>): string | undefined {
+  const direct = output.waitingQuestion;
+  if (typeof direct === "string" && direct.trim().length > 0) {
+    return direct.trim();
+  }
+
+  const result = output.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+  const nested = (result as Record<string, JsonValue>).waitingQuestion;
+  return typeof nested === "string" && nested.trim().length > 0 ? nested.trim() : undefined;
+}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -109,17 +145,80 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
           }
 
           const finishedRun = await deps.store.getRun(job.runId);
+          const outputStatus = getOutputStatus(output);
           if (finishedRun) {
-            const endedAt = new Date().toISOString();
-            await deps.store.upsertRun({
-              ...finishedRun,
-              status: "success",
-              endedAt,
-              latencyMs: Math.max(
-                0,
-                new Date(endedAt).getTime() - new Date(finishedRun.startedAt).getTime()
-              )
-            });
+            if (outputStatus === "waiting_signal") {
+              await deps.store.upsertRun({
+                ...finishedRun,
+                status: "queued",
+                endedAt: undefined,
+                latencyMs: undefined
+              });
+              if (deps.notifier) {
+                const waitingQuestion =
+                  getWaitingQuestion(output) ?? "Waiting for additional input or signal.";
+                try {
+                  const notifyResult = await deps.notifier.notifyWaitingSignal({
+                    runId: job.runId,
+                    jobId: job.id,
+                    workflowId: job.workflowId,
+                    threadId: job.threadId,
+                    tenantId: job.tenantId,
+                    workspaceId: job.workspaceId,
+                    waitingQuestion
+                  });
+                  if (notifyResult) {
+                    await deps.store.appendRunEvent({
+                      id: uuidv7(),
+                      runId: job.runId,
+                      ts: new Date().toISOString(),
+                      type: "state",
+                      level: "info",
+                      message: "Waiting question delivered",
+                      payload: {
+                        channel: notifyResult.channel,
+                        target: notifyResult.target,
+                        waitingQuestion
+                      },
+                      tenantId: job.tenantId,
+                      workspaceId: job.workspaceId,
+                      correlationId: job.runId,
+                      causationId: job.id
+                    });
+                  }
+                } catch (error) {
+                  const notifyError = error instanceof Error ? error.message : String(error);
+                  await deps.store.appendRunEvent({
+                    id: uuidv7(),
+                    runId: job.runId,
+                    ts: new Date().toISOString(),
+                    type: "state",
+                    level: "error",
+                    message: "Waiting question delivery failed",
+                    payload: {
+                      error: notifyError,
+                      waitingQuestion
+                    },
+                    tenantId: job.tenantId,
+                    workspaceId: job.workspaceId,
+                    correlationId: job.runId,
+                    causationId: job.id
+                  });
+                }
+              }
+            } else {
+              const endedAt = new Date().toISOString();
+              await deps.store.upsertRun({
+                ...finishedRun,
+                status: "success",
+                endedAt,
+                errorSummary: undefined,
+                latencyMs: Math.max(
+                  0,
+                  new Date(endedAt).getTime() - new Date(finishedRun.startedAt).getTime()
+                )
+              });
+            }
           }
 
           await deps.store.appendRunEvent({
@@ -128,7 +227,7 @@ export function createQueueRunner(deps: QueueRunnerDependencies) {
             ts: new Date().toISOString(),
             type: "state",
             level: "info",
-            message: "Run completed",
+            message: outputStatus === "waiting_signal" ? "Run waiting for signal" : "Run completed",
             payload: {
               output
             },

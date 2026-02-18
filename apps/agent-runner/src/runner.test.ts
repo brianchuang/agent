@@ -302,3 +302,120 @@ test("queue runner does not mark run success when completion is not acknowledged
   assert.equal(state.runs[0].status, "queued");
   assert.equal(state.runs[0].retries, 1);
 });
+
+test("queue runner keeps run queued when workflow returns waiting_signal", async () => {
+  const state = createMemoryStore();
+  const runner = createQueueRunner({
+    store: {
+      async claimWorkflowJobs({ workerId, limit }) {
+        const available = state.queueJobs.filter((job) => job.status === "queued").slice(0, limit);
+        return available.map((job, index) => {
+          const leaseToken = `${workerId}-lease-${index + 1}`;
+          job.status = "claimed";
+          job.leaseToken = leaseToken;
+          return { ...job };
+        });
+      },
+      async completeWorkflowJob({ jobId, leaseToken }) {
+        const job = state.queueJobs.find((item) => item.id === jobId);
+        assert.ok(job);
+        assert.equal(job.leaseToken, leaseToken);
+        job.status = "completed";
+      },
+      async failWorkflowJob() {
+        throw new Error("unexpected fail");
+      },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
+      async upsertRun(run) {
+        const existing = state.runs.find((item) => item.id === run.id);
+        if (existing) {
+          Object.assign(existing, run);
+        }
+      },
+      async getRun(runId: string) {
+        return state.runs.find((run) => run.id === runId);
+      },
+      async appendRunEvent(event) {
+        state.runEvents.push(event);
+      }
+    },
+    execute: async () => ({
+      status: "waiting_signal",
+      workflowId: "wf-1",
+      result: "No completion output"
+    })
+  });
+
+  const result = await runner.runOnce({ workerId: "worker-a", limit: 10, leaseMs: 30_000 });
+  assert.equal(result.claimed, 1);
+  assert.equal(result.completed, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(state.queueJobs[0].status, "completed");
+  assert.equal(state.runs[0].status, "queued");
+});
+
+test("queue runner notifies waiting signal through configured notifier", async () => {
+  const state = createMemoryStore();
+  const notifications: Array<{ workflowId: string; waitingQuestion: string }> = [];
+  const runner = createQueueRunner({
+    store: {
+      async claimWorkflowJobs({ workerId, limit }) {
+        const available = state.queueJobs.filter((job) => job.status === "queued").slice(0, limit);
+        return available.map((job, index) => {
+          const leaseToken = `${workerId}-lease-${index + 1}`;
+          job.status = "claimed";
+          job.leaseToken = leaseToken;
+          return { ...job };
+        });
+      },
+      async completeWorkflowJob({ jobId, leaseToken }) {
+        const job = state.queueJobs.find((item) => item.id === jobId);
+        assert.ok(job);
+        assert.equal(job.leaseToken, leaseToken);
+        job.status = "completed";
+      },
+      async failWorkflowJob() {
+        throw new Error("unexpected fail");
+      },
+      async getWorkflowJob(jobId) {
+        return state.queueJobs.find((item) => item.id === jobId);
+      },
+      async upsertRun(run) {
+        const existing = state.runs.find((item) => item.id === run.id);
+        if (existing) {
+          Object.assign(existing, run);
+        }
+      },
+      async getRun(runId: string) {
+        return state.runs.find((run) => run.id === runId);
+      },
+      async appendRunEvent(event) {
+        state.runEvents.push(event);
+      }
+    },
+    execute: async () => ({
+      status: "waiting_signal",
+      workflowId: "wf-1",
+      waitingQuestion: "Which inbox label should I monitor?"
+    }),
+    notifier: {
+      async notifyWaitingSignal(input) {
+        notifications.push({
+          workflowId: input.workflowId,
+          waitingQuestion: input.waitingQuestion
+        });
+        return { channel: "slack", target: "C123" };
+      }
+    }
+  });
+
+  const result = await runner.runOnce({ workerId: "worker-a", limit: 10, leaseMs: 30_000 });
+  assert.equal(result.claimed, 1);
+  assert.equal(result.completed, 1);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.workflowId, "wf-1");
+  assert.equal(notifications[0]?.waitingQuestion, "Which inbox label should I monitor?");
+  assert.ok(state.runEvents.some((event) => event.message === "Waiting question delivered"));
+});

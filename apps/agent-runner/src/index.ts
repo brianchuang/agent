@@ -1,6 +1,7 @@
 import { getObservabilityStore } from "@agent/observability";
 import { createInlineExecutionAdapter } from "./executor";
 import { createQueueRunner } from "./runner";
+import { createSlackWaitingSignalNotifierFromEnv } from "./slackNotifier";
 
 async function run() {
   const workerId = process.env.WORKER_ID ?? "agent-runner-worker";
@@ -13,9 +14,11 @@ async function run() {
 
   const store = getObservabilityStore();
   const executor = createInlineExecutionAdapter({ store });
+  const notifier = createSlackWaitingSignalNotifierFromEnv(store);
   const runner = createQueueRunner({
     store,
-    execute: (job) => executor.execute(job)
+    execute: (job) => executor.execute(job),
+    notifier
   });
 
   console.log(`[Agent Runner] Starting worker ${workerId}...`);

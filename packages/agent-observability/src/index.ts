@@ -36,5 +36,9 @@ export type {
   RunStatus,
   WorkflowQueueJob,
   WorkflowQueueJobCreateInput,
-  WorkflowQueueJobStatus
+  WorkflowQueueJobStatus,
+  MessagingChannelType,
+  SlackChannelSettings,
+  TenantMessagingSettings,
+  UpsertTenantMessagingSettingsInput
 } from "./types";
