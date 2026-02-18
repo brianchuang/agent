@@ -12,6 +12,30 @@
 
 The planner call path is provider-agnostic through AI SDK (`ai` + `@ai-sdk/openai` using OpenAI-compatible endpoints).
 
+## Prompt Layering
+
+Runtime system prompt is composed in two layers:
+
+- Base prompt (framework-owned): shared agentic workflow behavior for all agents.
+- Agent overlay prompt (optional, plain text): per-agent domain/persona guidance.
+
+Composition order enforces framework invariants:
+
+- Base prompt
+- Agent overlay
+- Immutable framework rules (appended last)
+
+This keeps one generic workflow while still allowing bounded agent specialization.
+
+### Overlay Authoring + Migration
+
+Existing agents that previously stored full runtime prompts should migrate `systemPrompt` to overlay-only content:
+
+- Keep domain context, business rules, style guidance, and examples.
+- Remove workflow-control directives (response format, tool-use policy, ask-user gating).
+- Keep overlay plain text; disallowed instruction-override lines are ignored at runtime.
+- Keep overlays concise; very long overlays are truncated to cap prompt growth.
+
 Provider/model chain is configured via env vars:
 
 - Primary: `LLM_API_KEY`, `LLM_API_BASE_URL`, `LLM_MODEL_CHAIN`
